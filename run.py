@@ -4,11 +4,11 @@ from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
-from models.model_GAVAE_SIM import LG_MSE
+from models.model_GAVAE_SIM import GAVAE_SIM
 
 def main(_):
-   tex_gavae = TEX_GAVAE(w=400, h=400, c=7, glob_c=24)
-   lg_mse.train(epochs=25000, batch_size=16, save_interval=100, dataset_file='./datasets/data_new.h5')
+   tex_gavae = GAVAE_SIM(w=160, h=160, c=1, layer_depth=3)
+   tex_gavae.train(epochs=50000, batch_size=1, save_interval=100, model_file='test.h5')
    return 0
 
 if __name__ == '__main__':
