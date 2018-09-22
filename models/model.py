@@ -22,6 +22,7 @@ class ModelGAVAE(object):
         self.img_rows = input_height
         self.img_cols = input_width
         self.channels = input_channels
+        self.batch_size = batch_size
 
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         self.mid_shape = (int(self.img_rows / (2 ** layer_depth)), int(self.img_cols / (2 ** layer_depth)), self.channels)

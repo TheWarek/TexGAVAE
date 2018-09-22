@@ -9,6 +9,7 @@ from keras.layers import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Lambda
 from keras.optimizers import Adam
+from keras import regularizers
 
 from keras.models import load_model
 
@@ -23,17 +24,17 @@ def new_custom_loss(y_true, y_pred, sigma, kernel):
     return 0
 
 class GAVAE_SIM(ModelGAVAE):
-    def __init__(self, w, h, c, layer_depth, batch_size=32, lr=0.0001):
+    def __init__(self, w, h, c, layer_depth, batch_size=32, lr=0.001):
         super(GAVAE_SIM, self).__init__(w, h, c, layer_depth, batch_size)
 
         # Init TODO: research the middle layer
-        self.m = 1 #50
+        self.m = batch_size #1 #50
         self.n_z = 2
 
         # Optimizer
         self.optimizer = Adam(lr=lr, beta_1=0.5)
-        self.loss = 'mean_squared_error'
-        self.reg = None  # regularizers.l2(0.00001)
+        self.loss = self.vae_loss
+        self.reg = regularizers.l2(0.00001)
 
         # Example of custom loss
         custom_loss = self.new_custom_loss(0.5, 400)
@@ -41,10 +42,10 @@ class GAVAE_SIM(ModelGAVAE):
         # Additional settings (VAE, GAN, generator, discriminator etc..)
 
         # VAE encoder part
-        input, mu, z = self.get_vae_encoder_part()
+        input, self.mu, self.log_sigma, self.z = self.get_vae_encoder_part()
         # Encoder model, to encode input into latent variable
         # We use the mean as the output as it is the center point, the representative of the gaussian
-        self.vae_enc = Model(input, mu)
+        self.vae_enc = Model(input, self.mu)
 
         # VAE decoder part
         # Generator model, generate new data given latent variable z
@@ -65,7 +66,7 @@ class GAVAE_SIM(ModelGAVAE):
         # TODO: Merge with GAN
         for i, l in enumerate(layer_list):
             if i == 0:
-                l_1 = l(z)
+                l_1 = l(self.z)
             else:
                 l_1 = l(l_1)
         self.vae_complete = Model(input, l_1)
@@ -76,7 +77,14 @@ class GAVAE_SIM(ModelGAVAE):
                                    optimizer=self.optimizer,
                                    metrics=['accuracy'])
 
-
+    def vae_loss(self, y_true, y_pred):
+        # compute the average MSE error, then scale it up, ie. simply sum on all axes
+        reconstruction_loss = K.mean(K.square(y_pred - y_true))
+        # compute the KL loss
+        kl_loss = - 0.5 * K.mean(1 + self.log_sigma - K.square(self.mu) - K.square(K.exp(self.log_sigma)), axis=-1)
+        # return the average loss over all images in batch
+        total_loss = K.mean(reconstruction_loss + kl_loss)
+        return total_loss
 
 
 
@@ -171,7 +179,7 @@ class GAVAE_SIM(ModelGAVAE):
 
         z = Lambda(self.sample_z)([mu, log_sigma])
 
-        return input, mu, z
+        return input, mu, log_sigma, z
 
     # Custom loss with additional parameters (other than y_pred y_true): How to do it
     def new_custom_loss(self, sigma, kernel):
@@ -195,7 +203,7 @@ class GAVAE_SIM(ModelGAVAE):
                 callback.writer.flush()
 
     # Train
-    def train(self, epochs, model_file, batch_size=32, save_interval=50):
+    def train(self, epochs, model_file, save_interval=50):
 
         # load image
         img = imread('./assets/sample.png', mode='L')
@@ -229,8 +237,8 @@ class GAVAE_SIM(ModelGAVAE):
                 plt.imshow(ims, cmap='gray')
                 plt.show()
 
-                mu[0][0] = mu[0][0] * 0.6
-                mu[0][1] = mu[0][1] * 0.9
+                mu[0][0] = mu[0][0] * 10.6
+                mu[0][1] = mu[0][1] * -0.9
                 imh = self.vae_dec.predict(mu)
 
                 imh = np.reshape(imh, (160, 160))
