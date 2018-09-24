@@ -85,6 +85,29 @@ class GAVAE_SIM(ModelGAVAE):
                                    optimizer=self.optimizer,
                                    metrics=['accuracy'])
 
+        # Implementation with GAN:
+
+        # Discriminator part (whole model to train)
+        disc_input, disc_output = self.get_discriminator()
+        # create discriminator model
+        self.discriminator = Model(disc_input, disc_output)
+        self.discriminator.compile(loss='binary_crossentropy',
+                                   optimizer=self.optimizer,
+                                   metrics=['accuracy'])
+
+        # Combined model = generator part which train on discriminator loss
+        # For the combined model we will only train the generator
+        self.discriminator.trainable = False
+
+        # The valid takes generated images as input and determines validity
+        img = self.vae_complete(input)
+        valid = self.discriminator(img)
+
+        self.generator_combined = Model(input, valid)
+        self.generator_combined.compile(loss=self.gen_loss,
+                                   optimizer=self.optimizer)
+
+
     def vae_loss(self, y_true, y_pred):
         # compute the average MSE error, then scale it up, ie. simply sum on all axes
         reconstruction_loss = K.mean(K.square(y_pred - y_true))
@@ -94,7 +117,14 @@ class GAVAE_SIM(ModelGAVAE):
         total_loss = K.mean(reconstruction_loss + kl_loss)
         return total_loss
 
-
+    def gen_loss(self, y_true, y_pred):
+        # compute the binary crossentropy
+        reconstruction_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
+        # compute the KL loss
+        kl_loss = - 0.5 * K.mean(1 + self.log_sigma - K.square(self.mu) - K.square(K.exp(self.log_sigma)), axis=-1)
+        # return the average loss over all images in batch
+        total_loss = K.mean(reconstruction_loss + kl_loss)
+        return total_loss
 
     def sample_z(self, args):
         mu, log_sigma = args
@@ -189,6 +219,46 @@ class GAVAE_SIM(ModelGAVAE):
         z = Lambda(self.sample_z)([mu, log_sigma])
 
         return input, mu, log_sigma, z
+
+    def get_discriminator(self):
+
+        input = Input(shape=self.img_shape)
+
+        l_1 = Conv2D(filters=16, kernel_size=3, strides=2, padding='same', data_format='channels_last',
+                     dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
+                     bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
+                     activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(input)
+        a_1 = LeakyReLU()(l_1)
+        b_1 = BatchNormalization(momentum=0.8)(a_1)
+        d_1 = Dropout(0.25)(b_1)
+
+        l_2 = Conv2D(filters=24, kernel_size=3, strides=2, padding='same', data_format='channels_last',
+                     dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
+                     bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
+                     activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(d_1)
+        a_2 = LeakyReLU()(l_2)
+        b_2 = BatchNormalization(momentum=0.8)(a_2)
+        d_2 = Dropout(0.25)(b_2)
+
+        l_3 = Conv2D(filters=32, kernel_size=3, strides=2, padding='same', data_format='channels_last',
+                     dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
+                     bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
+                     activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(d_2)
+        a_3 = LeakyReLU()(l_3)
+        b_3 = BatchNormalization(momentum=0.8)(a_3)
+        d_3 = Dropout(0.25)(b_3)
+
+        # For now we can flatten it TODO: make it all convolutional. Flattening is BAD PRACTICE
+        flat = Flatten()(d_3)
+        dense = Dense(512)(flat)
+        dense_a = LeakyReLU()(dense)
+        drop = Dropout(0.25)(dense_a)
+        dense = Dense(128)(drop)
+        dense_a = LeakyReLU()(dense)
+        drop = Dropout(0.25)(dense_a)
+        fin = Dense(1, activation='sigmoid')(drop)
+
+        return input, fin
 
     # Custom loss with additional parameters (other than y_pred y_true): How to do it
     def new_custom_loss(self, sigma, kernel):
