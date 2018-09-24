@@ -105,7 +105,8 @@ class GAVAE_SIM(ModelGAVAE):
 
         self.generator_combined = Model(input, valid)
         self.generator_combined.compile(loss=self.gen_loss,
-                                   optimizer=self.optimizer)
+                                   optimizer=self.optimizer,
+                                   metrics=['accuracy'])
 
 
     def vae_loss(self, y_true, y_pred):
@@ -302,14 +303,22 @@ class GAVAE_SIM(ModelGAVAE):
         for epoch in range(epochs):
             # TODO: code here
 
-            # batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size, self.patch_size)
-            batch = []
+            batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size, self.patch_size)
+            # batch = []
             # for i in range(self.batch_size):
             #     batch.append(self.texdat.read_segment(list(self.texdat.train.objectsPaths.items())[0][1].paths[0]))
             # batch = resize_batch_images(batch, self.patch_size)
             # batch = np.asarray([prep.scale(s.reshape((s.shape[0] * s.shape[1] * s.shape[2]))).reshape((s.shape[0], s.shape[1], s.shape[2])) for s in batch])
-            loss = self.vae_complete.train_on_batch(batch, batch)
-            print("Epoch: %d [loss: %f, acc.: %.2f%%]" % (epoch, loss[0], 100 * loss[1]))
+
+            generated = self.vae_complete.predict(batch)
+            batch_discriminator = np.concatenate((batch, generated))
+            labels = np.concatenate((np.zeros(self.batch_size, np.float32), (np.zeros(self.batch_size, np.float32)+1)))
+
+            loss_disc = self.discriminator.train_on_batch(batch_discriminator,labels)
+            print("Epoch: %d [Disc. loss: %f, acc.: %.2f%%]" % (epoch, loss_disc[0], 100 * loss_disc[1]))
+
+            loss_gen = self.generator_combined.train_on_batch(batch, np.ones(self.batch_size,np.float32))
+            print("Epoch: %d [Gen. loss: %f, acc.: %.2f%%]" % (epoch, loss_gen[0], 100 * loss_gen[1]))
 
             # Save interval
             if epoch % save_interval == 0:
