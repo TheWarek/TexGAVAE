@@ -50,7 +50,7 @@ class TexDAT:
         return True
 
     @staticmethod
-    def read_segment_file(abspath: str, texid: int = None):
+    def read_segment(abspath: str, texid: int = None):
         if not os.path.exists(abspath):
             return
         try:
@@ -155,7 +155,7 @@ class TexDAT:
 
         selected = None
 
-        selected = np.asarray([TexDAT.read_segment_file(p) for p in selected_paths])
+        selected = np.asarray([TexDAT.read_segment(p) for p in selected_paths])
 
         if image_size:
             selected = resize_batch_images(selected, image_size)
@@ -188,8 +188,8 @@ class TexDAT:
         labels = np.zeros(batch, dtype=np.float32)
         labels[(batch>>1):batch] = 1
 
-        batch_1 = [TexDAT.read_segment_file(p) for p in batch_1_paths]
-        batch_2 = [TexDAT.read_segment_file(p) for p in batch_2_paths]
+        batch_1 = [TexDAT.read_segment(p) for p in batch_1_paths]
+        batch_2 = [TexDAT.read_segment(p) for p in batch_2_paths]
 
         if image_size:
             batch_1 = resize_batch_images(batch_1, image_size)

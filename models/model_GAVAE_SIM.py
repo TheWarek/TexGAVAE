@@ -10,7 +10,6 @@ from keras.layers.advanced_activations import LeakyReLU
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Lambda
 from keras.optimizers import Adam
 from keras import regularizers
-from sklearn import preprocessing
 
 from keras.models import load_model
 
@@ -22,6 +21,8 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 from data_loader import TexDAT
+from data_loader import resize_batch_images
+import sklearn.preprocessing as prep
 
 def new_custom_loss(y_true, y_pred, sigma, kernel):
     return 0
@@ -39,7 +40,7 @@ class GAVAE_SIM(ModelGAVAE):
         self.n_z = 5
 
         # Optimizer
-        self.optimizer = Adam(lr=lr, beta_1=0.9)
+        self.optimizer = Adam(lr=lr, beta_1=0.5)
         self.loss = self.vae_loss
         self.reg = regularizers.l2(0.0001)
 
@@ -212,7 +213,6 @@ class GAVAE_SIM(ModelGAVAE):
 
     # Train
     def train(self, epochs, model_file, save_interval=50):
-
         # load image
         # img = imread('./assets/sample.png', mode='L')
 
@@ -232,7 +232,12 @@ class GAVAE_SIM(ModelGAVAE):
         for epoch in range(epochs):
             # TODO: code here
 
-            batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size, self.patch_size)
+            # batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size, self.patch_size)
+            batch = []
+            # for i in range(self.batch_size):
+            #     batch.append(self.texdat.read_segment(list(self.texdat.train.objectsPaths.items())[0][1].paths[0]))
+            # batch = resize_batch_images(batch, self.patch_size)
+            # batch = np.asarray([prep.scale(s.reshape((s.shape[0] * s.shape[1] * s.shape[2]))).reshape((s.shape[0], s.shape[1], s.shape[2])) for s in batch])
             loss = self.vae_complete.train_on_batch(batch, batch)
             print("Epoch: %d [loss: %f, acc.: %.2f%%]" % (epoch, loss[0], 100 * loss[1]))
 
