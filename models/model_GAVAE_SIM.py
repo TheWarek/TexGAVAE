@@ -8,7 +8,7 @@ from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.layers import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Lambda
-from keras.optimizers import Adam
+from keras.optimizers import Adam, SGD, Adadelta
 from keras import regularizers
 
 from keras.models import load_model
@@ -28,7 +28,7 @@ def new_custom_loss(y_true, y_pred, sigma, kernel):
     return 0
 
 class GAVAE_SIM(ModelGAVAE):
-    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.00001):
+    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.001):
         super(GAVAE_SIM, self).__init__(w, h, c, layer_depth, batch_size)
         self.patch_size = (w,h,c)
 
@@ -40,9 +40,12 @@ class GAVAE_SIM(ModelGAVAE):
         self.n_z = 5
 
         # Optimizer
-        self.optimizer = Adam(lr=lr, beta_1=0.5)
+        self.optimizer = Adam(lr=lr, beta_1=0.9)
+        self.optimizer_disc = Adam(lr=lr / 10., beta_1=0.9)
+        # self.optimizer = SGD(lr=lr, momentum=0.9, decay=1e-6, nesterov=True)
+        # self.optimizer = Adadelta(lr=1.0, rho=0.95, epsilon=None, decay=0.0)
         self.loss = self.vae_loss
-        self.reg = regularizers.l2(0.0001)
+        self.reg = regularizers.l2(1e-5)
 
         # Example of custom loss
         custom_loss = self.new_custom_loss(0.5, 400)
@@ -92,7 +95,7 @@ class GAVAE_SIM(ModelGAVAE):
         # create discriminator model
         self.discriminator = Model(disc_input, disc_output)
         self.discriminator.compile(loss='binary_crossentropy',
-                                   optimizer=self.optimizer,
+                                   optimizer=self.optimizer_disc,
                                    metrics=['accuracy'])
 
         # Combined model = generator part which train on discriminator loss
@@ -139,9 +142,11 @@ class GAVAE_SIM(ModelGAVAE):
 
         list.append(Dense(512, activation=None))
         list.append(LeakyReLU())
+        list.append(BatchNormalization(momentum=0.8))
 
         list.append(Dense(self.mid_shape[0] * self.mid_shape[1]))
         list.append(LeakyReLU())
+        list.append(BatchNormalization(momentum=0.8))
 
         list.append(Reshape(target_shape=self.mid_shape)) # TODO: need to know middle shape?
 
@@ -176,7 +181,7 @@ class GAVAE_SIM(ModelGAVAE):
                      dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
-        list.append(LeakyReLU())
+        #list.append(LeakyReLU())
 
         return list
 
@@ -213,9 +218,10 @@ class GAVAE_SIM(ModelGAVAE):
         flat = Flatten()(d_3)
         dense = Dense(512, activation=None)(flat)
         dense_a = LeakyReLU()(dense)
+        bn = BatchNormalization(momentum=0.8)(dense_a)
 
-        mu = Dense(self.n_z, activation='linear')(dense_a)
-        log_sigma = Dense(self.n_z, activation='linear')(dense_a)
+        mu = Dense(self.n_z, activation='linear')(bn)
+        log_sigma = Dense(self.n_z, activation='linear')(bn)
 
         z = Lambda(self.sample_z)([mu, log_sigma])
 
@@ -253,10 +259,12 @@ class GAVAE_SIM(ModelGAVAE):
         flat = Flatten()(d_3)
         dense = Dense(512)(flat)
         dense_a = LeakyReLU()(dense)
-        drop = Dropout(0.25)(dense_a)
+        bn = BatchNormalization(momentum=0.8)(dense_a)
+        drop = Dropout(0.25)(bn)
         dense = Dense(128)(drop)
         dense_a = LeakyReLU()(dense)
-        drop = Dropout(0.25)(dense_a)
+        bn = BatchNormalization(momentum=0.8)(dense_a)
+        drop = Dropout(0.25)(bn)
         fin = Dense(1, activation='sigmoid')(drop)
 
         return input, fin
@@ -312,7 +320,7 @@ class GAVAE_SIM(ModelGAVAE):
 
             generated = self.vae_complete.predict(batch)
             batch_discriminator = np.concatenate((batch, generated))
-            labels = np.concatenate((np.zeros(self.batch_size, np.float32), (np.zeros(self.batch_size, np.float32)+1)))
+            labels = np.concatenate((np.ones(self.batch_size, np.float32), (np.zeros(self.batch_size, np.float32))))
 
             loss_disc = self.discriminator.train_on_batch(batch_discriminator,labels)
             print("Epoch: %d [Disc. loss: %f, acc.: %.2f%%]" % (epoch, loss_disc[0], 100 * loss_disc[1]))
