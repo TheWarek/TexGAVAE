@@ -10,6 +10,7 @@ from keras.layers.advanced_activations import LeakyReLU
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Lambda
 from keras.optimizers import Adam
 from keras import regularizers
+from sklearn import preprocessing
 
 from keras.models import load_model
 
@@ -26,7 +27,7 @@ def new_custom_loss(y_true, y_pred, sigma, kernel):
     return 0
 
 class GAVAE_SIM(ModelGAVAE):
-    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.001):
+    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.00001):
         super(GAVAE_SIM, self).__init__(w, h, c, layer_depth, batch_size)
         self.patch_size = (w,h,c)
 
@@ -35,12 +36,12 @@ class GAVAE_SIM(ModelGAVAE):
 
         # Init TODO: research the middle layer
         self.m = batch_size #1 #50
-        self.n_z = 2
+        self.n_z = 5
 
         # Optimizer
-        self.optimizer = Adam(lr=lr, beta_1=0.5)
+        self.optimizer = Adam(lr=lr, beta_1=0.9)
         self.loss = self.vae_loss
-        self.reg = regularizers.l2(0.00001)
+        self.reg = regularizers.l2(0.0001)
 
         # Example of custom loss
         custom_loss = self.new_custom_loss(0.5, 400)
@@ -97,6 +98,7 @@ class GAVAE_SIM(ModelGAVAE):
     def sample_z(self, args):
         mu, log_sigma = args
         eps = K.random_normal(shape=(self.m, self.n_z), mean=0., stddev=1.)
+        #sampling from Z~N(μ, σ^2) is the same as sampling from μ + σX, X~N(0,1)
         return mu + K.exp(log_sigma / 2) * eps
 
     def get_vae_decoder_part(self):
@@ -210,12 +212,17 @@ class GAVAE_SIM(ModelGAVAE):
 
     # Train
     def train(self, epochs, model_file, save_interval=50):
+
         # load image
         # img = imread('./assets/sample.png', mode='L')
 
         # texdat.next_classic_batch_from_paths(texdat.train.objectsPaths, MINIBATCH_SIZE, PATCH_SIZE)
 
         # img = np.reshape(img, (1, 160, 160, 1))
+
+        batch_test = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
+                                                          self.patch_size)
+
 
         if os.path.exists(model_file):
             #self.vae_complete = load_model(model_file)
@@ -229,18 +236,15 @@ class GAVAE_SIM(ModelGAVAE):
             loss = self.vae_complete.train_on_batch(batch, batch)
             print("Epoch: %d [loss: %f, acc.: %.2f%%]" % (epoch, loss[0], 100 * loss[1]))
 
-            mu = self.vae_enc.predict(batch)
-
-            print(mu)
-
             # Save interval
             if epoch % save_interval == 0:
+                mu = self.vae_enc.predict(batch_test)
                 if epoch == 0:
-                    ims = np.reshape(batch[0], (160, 160))
+                    ims = np.reshape(batch_test[0], (160, 160))
                     plt.imshow(ims, cmap='gray')
                     plt.show()
                 # TODO: logging
-                ims = self.vae_complete.predict(batch)
+                ims = self.vae_complete.predict(batch_test)
                 ims = np.reshape(ims[0],(160,160))
                 plt.imshow(ims, cmap='gray')
                 plt.show()
@@ -252,8 +256,8 @@ class GAVAE_SIM(ModelGAVAE):
                 imh0 = np.reshape(imh[0], (160, 160))
                 plt.imshow(imh0, cmap='gray')
                 plt.show()
-                imh1 = np.reshape(imh[1], (160, 160))
-                plt.imshow(imh1, cmap='gray')
-                plt.show()
+                # imh1 = np.reshape(imh[1], (160, 160))
+                # plt.imshow(imh1, cmap='gray')
+                # plt.show()
 
                 self.vae_complete.save('test.h5')
