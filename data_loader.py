@@ -11,7 +11,7 @@ from skimage import transform
 import sklearn.preprocessing as prep
 
 
-def resize_batch_images(batch: list, image_size: tuple) -> np.ndarray:
+def resize_batch_images(batch, image_size: tuple) -> np.ndarray:
     return np.asarray([transform.resize(image, image_size, mode="reflect") for image in batch])
 
 
@@ -59,7 +59,7 @@ class TexDAT:
                 objidx = int.from_bytes(bf.read(4), byteorder="little", signed=False)
                 texs = int.from_bytes(bf.read(4), byteorder="little", signed=False)
                 if texid is None:
-                    texid = random.randint(0,texs)
+                    texid = random.randint(0,texs-1)
                 for i in range(texs):
                     rows = int.from_bytes(bf.read(4), byteorder="little", signed=False)
                     cols = int.from_bytes(bf.read(4), byteorder="little", signed=False)
@@ -85,7 +85,8 @@ class TexDAT:
         files_as_objects = {}
         for file in files:
             if only_paths: # reads only paths - runtime loading files
-                name = file[file.rfind("/") + 1:file[0:file.rfind("_")].rfind("_")]
+                # name = file[file.rfind("/") + 1:file[0:file.rfind("_")].rfind("_")]
+                name = file
                 if files_as_objects.get(name):
                     files_as_objects[name].paths.append(os.path.join(abspath, file))
                 else:
@@ -152,12 +153,14 @@ class TexDAT:
         classes = np.random.choice(items, batch, False)
         selected_paths = [random.choice(c.paths) for c in classes]
 
-        selected = [TexDAT.read_segment_file(p) for p in selected_paths]
+        selected = None
+
+        selected = np.asarray([TexDAT.read_segment_file(p) for p in selected_paths])
 
         if image_size:
             selected = resize_batch_images(selected, image_size)
 
-        selected = [prep.scale(s.reshape((s.shape[0] * s.shape[1] * s.shape[2]))).reshape((s.shape[0], s.shape[1], s.shape[2])) for s in selected.data]
+        selected = np.asarray([prep.scale(s.reshape((s.shape[0] * s.shape[1] * s.shape[2]))).reshape((s.shape[0], s.shape[1], s.shape[2])) for s in selected])
 
         return selected
 

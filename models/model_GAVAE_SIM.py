@@ -20,12 +20,18 @@ from matplotlib import pyplot as plt
 
 import numpy as np
 
+from data_loader import TexDAT
+
 def new_custom_loss(y_true, y_pred, sigma, kernel):
     return 0
 
 class GAVAE_SIM(ModelGAVAE):
-    def __init__(self, w, h, c, layer_depth, batch_size=32, lr=0.001):
+    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.001):
         super(GAVAE_SIM, self).__init__(w, h, c, layer_depth, batch_size)
+        self.patch_size = (w,h,c)
+
+        self.texdat = TexDAT(data_path, self.batch_size)
+        self.texdat.load_data(only_paths=True)
 
         # Init TODO: research the middle layer
         self.m = batch_size #1 #50
@@ -204,11 +210,12 @@ class GAVAE_SIM(ModelGAVAE):
 
     # Train
     def train(self, epochs, model_file, save_interval=50):
-
         # load image
-        img = imread('./assets/sample.png', mode='L')
+        # img = imread('./assets/sample.png', mode='L')
 
-        img = np.reshape(img, (1, 160, 160, 1))
+        # texdat.next_classic_batch_from_paths(texdat.train.objectsPaths, MINIBATCH_SIZE, PATCH_SIZE)
+
+        # img = np.reshape(img, (1, 160, 160, 1))
 
         if os.path.exists(model_file):
             #self.vae_complete = load_model(model_file)
@@ -218,22 +225,23 @@ class GAVAE_SIM(ModelGAVAE):
         for epoch in range(epochs):
             # TODO: code here
 
-            loss = self.vae_complete.train_on_batch(img, img)
+            batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size, self.patch_size)
+            loss = self.vae_complete.train_on_batch(batch, batch)
             print("Epoch: %d [loss: %f, acc.: %.2f%%]" % (epoch, loss[0], 100 * loss[1]))
 
-            mu = self.vae_enc.predict(img)
+            mu = self.vae_enc.predict(batch)
 
             print(mu)
 
             # Save interval
             if epoch % save_interval == 0:
                 if epoch == 0:
-                    ims = np.reshape(img, (160, 160))
+                    ims = np.reshape(batch[0], (160, 160))
                     plt.imshow(ims, cmap='gray')
                     plt.show()
                 # TODO: logging
-                ims = self.vae_complete.predict(img)
-                ims = np.reshape(ims,(160,160))
+                ims = self.vae_complete.predict(batch)
+                ims = np.reshape(ims[0],(160,160))
                 plt.imshow(ims, cmap='gray')
                 plt.show()
 
@@ -241,8 +249,11 @@ class GAVAE_SIM(ModelGAVAE):
                 mu[0][1] = mu[0][1] * -0.9
                 imh = self.vae_dec.predict(mu)
 
-                imh = np.reshape(imh, (160, 160))
-                plt.imshow(imh, cmap='gray')
+                imh0 = np.reshape(imh[0], (160, 160))
+                plt.imshow(imh0, cmap='gray')
+                plt.show()
+                imh1 = np.reshape(imh[1], (160, 160))
+                plt.imshow(imh1, cmap='gray')
                 plt.show()
 
                 self.vae_complete.save('test.h5')
