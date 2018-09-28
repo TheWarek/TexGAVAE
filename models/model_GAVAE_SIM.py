@@ -8,6 +8,7 @@ from keras.models import Sequential, Model
 from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.layers import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
+from keras.layers import Activation
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Lambda
 from keras.optimizers import Adam, SGD, Adadelta
 from keras import regularizers
@@ -215,10 +216,10 @@ class GAVAE_SIM(ModelGAVAE):
 
 
         list.append(Conv2D(filters=1, kernel_size=1, strides=1, padding='same', data_format='channels_last',
-                     dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
+                     dilation_rate=(1, 1), activation='tanh', use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
-        #list.append(LeakyReLU())
+        # list.append(Activation('tanh'))
 
         return list
 
@@ -386,7 +387,9 @@ class GAVAE_SIM(ModelGAVAE):
             if epoch == 0:
                 batch_test = batch
 
-            generated = self.vae_complete.predict(batch)
+            loss_vae, acc_vae = self.vae_complete.train_on_batch(batch, batch)
+            print("Epoch: %d [VAE. loss: %f, acc.: %.2f%%]" % (epoch, loss_vae[0], 100 * acc_vae[1]))
+            generated = self.vae_complete.predict(batch_test)
 
             # batch_discriminator = np.concatenate((batch, generated))
             # labels = np.concatenate((np.ones(self.batch_size, np.float32), (np.zeros(self.batch_size, np.float32))))
@@ -398,13 +401,13 @@ class GAVAE_SIM(ModelGAVAE):
             labels_fake = np.zeros(self.batch_size, np.float32) + np.multiply(np.random.rand(self.batch_size), 0.3 )
 
             # IMPROVE 1. mini-batches of REAL / FAKE
-            loss_real = self.discriminator.train_on_batch(batch, labels_real)
-            loss_fake = self.discriminator.train_on_batch(generated, labels_fake)
-            loss_disc = 0.5 * np.add(loss_real, loss_fake)
-            print("Epoch: %d [Disc. loss: %f, acc.: %.2f%%]" % (epoch, loss_disc[0], 100 * loss_disc[1]))
+            # loss_real = self.discriminator.train_on_batch(batch, labels_real)
+            # loss_fake = self.discriminator.train_on_batch(generated, labels_fake)
+            # loss_disc = 0.5 * np.add(loss_real, loss_fake)
+            # print("Epoch: %d [Disc. loss: %f, acc.: %.2f%%]" % (epoch, loss_disc[0], 100 * loss_disc[1]))
 
-            loss_gen = self.generator_combined.train_on_batch(batch, labels_real)
-            print("Epoch: %d [Gen. loss: %f, acc.: %.2f%%]" % (epoch, loss_gen[0], 100 * loss_gen[1]))
+            # loss_gen = self.generator_combined.train_on_batch(batch, labels_real)
+            # print("Epoch: %d [Gen. loss: %f, acc.: %.2f%%]" % (epoch, loss_gen[0], 100 * loss_gen[1]))
 
 
             # Save interval
