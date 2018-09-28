@@ -363,9 +363,9 @@ class GAVAE_SIM(ModelGAVAE):
 
         # img = np.reshape(img, (1, 160, 160, 1))
 
-        batch_test = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
-                                                          self.patch_size)
-        batch = batch_test
+        # batch_test = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
+        #                                                   self.patch_size)
+        # batch = batch_test
 
         if os.path.exists(model_file):
             #self.vae_complete = load_model(model_file)
@@ -376,11 +376,15 @@ class GAVAE_SIM(ModelGAVAE):
             # TODO: code here
 
             # batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size, self.patch_size)
-            # batch = []
-            # for i in range(self.batch_size):
-            #     batch.append(self.texdat.read_segment(list(self.texdat.train.objectsPaths.items())[0][1].paths[0]))
-            # batch = resize_batch_images(batch, self.patch_size)
+            batch = []
+            for i in range(self.batch_size):
+                batch.append(self.texdat.read_segment(list(self.texdat.train.objectsPaths.items())[45][1].paths[0]))
+            batch = resize_batch_images(batch, self.patch_size, True)
+
             # batch = np.asarray([prep.scale(s.reshape((s.shape[0] * s.shape[1] * s.shape[2]))).reshape((s.shape[0], s.shape[1], s.shape[2])) for s in batch])
+
+            if epoch == 0:
+                batch_test = batch
 
             generated = self.vae_complete.predict(batch)
 

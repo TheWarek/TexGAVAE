@@ -11,8 +11,11 @@ from skimage import transform
 import sklearn.preprocessing as prep
 
 
-def resize_batch_images(batch, image_size: tuple) -> np.ndarray:
-    return np.asarray([transform.resize(image, image_size, mode="reflect") for image in batch])
+def resize_batch_images(batch, image_size: tuple, normalize:bool=False) -> np.ndarray:
+    if normalize:
+        return np.asarray([transform.resize((image-0.5)*2, image_size, mode="reflect") for image in batch])
+    else:
+        return np.asarray([transform.resize(image, image_size, mode="reflect") for image in batch])
 
 
 class ImageObjects:
@@ -145,7 +148,7 @@ class TexDAT:
                 print(str(len(self.test.data)) + " test objects loaded")
 
     @staticmethod
-    def next_classic_batch_from_paths(paths: dict, batch_size: int = None, image_size = None):
+    def next_classic_batch_from_paths(paths: dict, batch_size: int = None, image_size = None, normalize:str = '-1to1'):
         batch = batch_size
         if batch_size == None:
             return []
@@ -158,9 +161,12 @@ class TexDAT:
         selected = np.asarray([TexDAT.read_segment(p) for p in selected_paths])
 
         if image_size:
-            selected = resize_batch_images(selected, image_size)
-
-        selected = np.asarray([prep.scale(s.reshape((s.shape[0] * s.shape[1] * s.shape[2]))).reshape((s.shape[0], s.shape[1], s.shape[2])) for s in selected])
+            if normalize == '-1to1':
+                selected = resize_batch_images(selected, image_size, True)
+            else:
+                selected = resize_batch_images(selected, image_size)
+        if normalize == 'zeromean':
+            selected = np.asarray([prep.scale(s.reshape((s.shape[0] * s.shape[1] * s.shape[2]))).reshape((s.shape[0], s.shape[1], s.shape[2])) for s in selected])
 
         return selected
 
