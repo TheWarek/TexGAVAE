@@ -11,8 +11,11 @@ from skimage import transform
 import sklearn.preprocessing as prep
 
 
-def resize_batch_images(batch, image_size: tuple) -> np.ndarray:
-    return np.asarray([transform.resize(image, image_size, mode="reflect") for image in batch])
+def resize_batch_images(batch, image_size: tuple, normalize:bool=False) -> np.ndarray:
+    if normalize:
+        return np.asarray([transform.resize((image-0.5)*2, image_size, mode="reflect") for image in batch])
+    else:
+        return np.asarray([transform.resize(image, image_size, mode="reflect") for image in batch])
 
 
 class ImageObjects:
