@@ -17,6 +17,7 @@ from keras.models import load_model
 
 from scipy.misc import imread
 import os.path
+import random
 
 from matplotlib import pyplot as plt
 
@@ -130,9 +131,9 @@ class GAVAE_SIM(ModelGAVAE):
         # compute the average MSE error, then scale it up, ie. simply sum on all axes
         reconstruction_loss = K.mean(K.square(y_pred - y_true))
         # compute the KL loss
-        kl_loss = - 0.5 * K.mean(1 + self.log_sigma - K.square(self.mu) - K.square(K.exp(self.log_sigma)), axis=-1)
+        # kl_loss = - 0.5 * K.mean(1 + self.log_sigma - K.square(self.mu) - K.square(K.exp(self.log_sigma)), axis=-1)
         # return the average loss over all images in batch
-        total_loss = K.mean(reconstruction_loss + kl_loss)
+        total_loss = K.mean(reconstruction_loss)
         return total_loss
 
     def gen_loss(self, y_true, y_pred):
@@ -378,8 +379,10 @@ class GAVAE_SIM(ModelGAVAE):
 
             # batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size, self.patch_size)
             batch = []
+            textures_max_id = len(self.texdat.train.objectsPaths.items())-1
+            texture_id = random.randint(0,textures_max_id)
             for i in range(self.batch_size):
-                batch.append(self.texdat.read_segment(list(self.texdat.train.objectsPaths.items())[45][1].paths[0]))
+                batch.append(self.texdat.read_segment(list(self.texdat.train.objectsPaths.items())[texture_id][1].paths[0]))
             batch = resize_batch_images(batch, self.patch_size, True)
 
             # batch = np.asarray([prep.scale(s.reshape((s.shape[0] * s.shape[1] * s.shape[2]))).reshape((s.shape[0], s.shape[1], s.shape[2])) for s in batch])
@@ -388,8 +391,8 @@ class GAVAE_SIM(ModelGAVAE):
                 batch_test = batch
 
             loss_vae, acc_vae = self.vae_complete.train_on_batch(batch, batch)
-            print("Epoch: %d [VAE. loss: %f, acc.: %.2f%%]" % (epoch, loss_vae[0], 100 * acc_vae[1]))
-            generated = self.vae_complete.predict(batch_test)
+            print("Epoch: %d [VAE. loss: %f, acc.: %.2f%%]" % (epoch, loss_vae, 100 * acc_vae))
+            # generated = self.vae_complete.predict(batch_test)
 
             # batch_discriminator = np.concatenate((batch, generated))
             # labels = np.concatenate((np.ones(self.batch_size, np.float32), (np.zeros(self.batch_size, np.float32))))
@@ -397,8 +400,8 @@ class GAVAE_SIM(ModelGAVAE):
             # print("Epoch: %d [Disc. loss: %f, acc.: %.2f%%]" % (epoch, loss_disc[0], 100 * loss_disc[1]))
 
             # IMPROVE 2. use noisy labels
-            labels_real = np.ones(self.batch_size, np.float32) + np.subtract(np.multiply(np.random.rand(self.batch_size), 0.3 ), 0.15)
-            labels_fake = np.zeros(self.batch_size, np.float32) + np.multiply(np.random.rand(self.batch_size), 0.3 )
+            # labels_real = np.ones(self.batch_size, np.float32) + np.subtract(np.multiply(np.random.rand(self.batch_size), 0.3 ), 0.15)
+            # labels_fake = np.zeros(self.batch_size, np.float32) + np.multiply(np.random.rand(self.batch_size), 0.3 )
 
             # IMPROVE 1. mini-batches of REAL / FAKE
             # loss_real = self.discriminator.train_on_batch(batch, labels_real)
@@ -420,18 +423,41 @@ class GAVAE_SIM(ModelGAVAE):
                 # TODO: logging
                 ims = self.vae_complete.predict(batch_test)
                 ims = np.reshape(ims[0],(160,160))
+                plt.title("Epoch {:d}".format(epoch))
                 plt.imshow(ims, cmap='gray')
                 plt.show()
 
-                mu[0][0] = mu[0][0] * 10.6
-                mu[0][1] = mu[0][1] * -0.9
-                imh = self.vae_dec.predict(mu)
+                # mu[0][0] = mu[0][0] * 10.6
+                # mu[0][1] = mu[0][1] * -0.9
+                # imh = self.vae_dec.predict(mu)
 
-                imh0 = np.reshape(imh[0], (160, 160))
-                plt.imshow(imh0, cmap='gray')
-                plt.show()
+                # imh0 = np.reshape(imh[0], (160, 160))
+                # plt.imshow(imh0, cmap='gray')
+                # plt.show()
                 # imh1 = np.reshape(imh[1], (160, 160))
                 # plt.imshow(imh1, cmap='gray')
                 # plt.show()
 
                 self.vae_complete.save('test.h5')
+
+    def validate(self, model_file):
+        if os.path.exists(model_file):
+            self.vae_complete.load_weights(model_file)
+
+        textures_count = len(self.texdat.train.objectsPaths.items())
+        for texture_id in range(textures_count):
+            batch = []
+            for i in range(self.batch_size):
+                batch.append(self.texdat.read_segment(list(self.texdat.train.objectsPaths.items())[texture_id][1].paths[0]))
+            batch = resize_batch_images(batch, self.patch_size, True)
+            plt.title('Texture {:d}'.format(texture_id))
+            plt.imshow(batch[0].reshape((160,160)), cmap='gray')
+            plt.show()
+            mu = self.vae_enc.predict(batch)
+
+            print(mu)
+            img = self.vae_complete.predict(batch)
+            plt.title('Texture {:d}'.format(texture_id))
+            plt.imshow(img[0].reshape((160,160)), cmap='gray')
+            plt.show()
+        return
