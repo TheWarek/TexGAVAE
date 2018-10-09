@@ -22,14 +22,14 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 from data_loader import TexDAT
-from data_loader import resize_batch_images
+from data_loader import resize_batch_images, normalize_batch_images
 import sklearn.preprocessing as prep
 
 def new_custom_loss(y_true, y_pred, sigma, kernel):
     return 0
 
 class GAVAE_SIM(ModelGAVAE):
-    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.001):
+    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.001, margin=4.5):
         super(GAVAE_SIM, self).__init__(w, h, c, layer_depth, batch_size)
         self.patch_size = (w,h,c)
 
@@ -39,7 +39,7 @@ class GAVAE_SIM(ModelGAVAE):
         # Init TODO: research the middle layer
         self.m = batch_size #1 #50
         self.n_z = 128
-
+        self.margin = margin
         self.dropout = 0.1
 
         # Optimizer
@@ -56,10 +56,10 @@ class GAVAE_SIM(ModelGAVAE):
         # Additional settings (VAE, GAN, generator, discriminator etc..)
 
         # VAE encoder part
-        input, self.mu, self.log_sigma, self.z = self.get_vae_encoder_part()
+        self.input, self.mu_1, self.log_sigma_1, self.z = self.get_vae_encoder_part()
         # Encoder model, to encode input into latent variable
         # We use the mean as the output as it is the center point, the representative of the gaussian
-        self.vae_enc = Model(input, self.mu, name='vae_enc')
+        self.vae_enc = Model(self.input, [self.mu_1, self.log_sigma_1], name='vae_enc')
 
         # VAE decoder part
         # Generator model, generate new data given latent variable z
@@ -85,7 +85,9 @@ class GAVAE_SIM(ModelGAVAE):
                 l_1 = l(l_1)
 
         with tf.variable_scope('vae_complete'):
-            self.vae_complete = Model(input, l_1, name='vae_complete')
+            self.vae_complete = Model(self.input, l_1, name='vae_complete')
+
+        self.mu_2, self.log_sigma_2 = self.vae_enc(self.vae_complete(self.input))
 
         #160x160
 
@@ -108,10 +110,10 @@ class GAVAE_SIM(ModelGAVAE):
         self.discriminator.trainable = False
 
         # The valid takes generated images as input and determines validity
-        img = self.vae_complete(input)
+        img = self.vae_complete(self.input)
         valid = self.discriminator(img)
 
-        self.generator_combined = Model(input, valid, name='generator_combined')
+        self.generator_combined = Model(self.input, valid, name='generator_combined')
         self.generator_combined.compile(loss=self.gen_loss,
                                    optimizer=self.optimizer,
                                    metrics=['accuracy'])
@@ -132,19 +134,22 @@ class GAVAE_SIM(ModelGAVAE):
         # reconstruction_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
         reconstruction_loss = K.mean(K.square(y_pred - y_true))
         # compute the KL loss
-        kl_loss = - 0.5 * K.mean(1 + self.log_sigma - K.square(self.mu) - K.square(K.exp(self.log_sigma)), axis=-1)
+        kl_loss = - 0.5 * K.mean(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
         # return the average loss over all images in batch
-        total_loss = K.mean(reconstruction_loss + kl_loss)
+        total_loss = K.mean(reconstruction_loss + 0.02 * kl_loss)
         return total_loss
 
     def gen_loss(self, y_true, y_pred):
+        # encoder loss
+        z2 = Lambda(self.sample_z)([self.mu_2, self.log_sigma_2])
+        enc_loss = K.mean(K.minimum(0., self.margin - K.sqrt(K.sum(K.square(z2) - K.square(self.z),axis=1))))
         # compute the binary crossentropy
         # reconstruction_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
         reconstruction_loss = K.mean(K.square(y_pred - y_true))
         # compute the KL loss
-        kl_loss = - 0.5 * K.mean(1 + self.log_sigma - K.square(self.mu) - K.square(K.exp(self.log_sigma)), axis=-1)
+        kl_loss = - 0.5 * K.mean(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
         # return the average loss over all images in batch
-        total_loss = K.mean(reconstruction_loss + kl_loss)
+        total_loss = K.mean(reconstruction_loss + 0.02 * kl_loss) + enc_loss
         return total_loss
 
     def disc_loss(selfself, y_true, y_pred):
@@ -371,23 +376,43 @@ class GAVAE_SIM(ModelGAVAE):
 
         # img = np.reshape(img, (1, 160, 160, 1))
 
-        batch_test = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
-                                                          self.patch_size, normalize='zeromean')
-        #batch = batch_test
+        # batch_test = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
+        #                                                   self.patch_size, normalize='zeromean')
+        # batch = batch_test
+
+        sorted_list = list(self.texdat.train.objectsPaths.items())
+        sorted_list.sort()
+
+        batch_test = []
+        indices = [46, 103, 137, 195]
+        for ind in indices:
+            for i in range(int(self.batch_size / 4)):
+                batch_test.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
+        batch_test = resize_batch_images(batch_test, self.patch_size)
+
+        batch_test = normalize_batch_images(batch_test, 'zeromean')
 
         train_disc = True
         train_gen = True
 
         if os.path.exists(model_file):
-            #self.vae_complete = load_model(model_file)
+            # self.vae_complete = load_model(model_file)
             self.generator_combined.load_weights(model_file)
 
         # Epochs
         for epoch in range(epochs):
             # TODO: code here
 
-            batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
-                                                              self.patch_size, normalize='zeromean')
+            # batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
+            #                                                   self.patch_size, normalize='zeromean')
+
+            batch = []
+            for ind in indices:
+                for i in range(int(self.batch_size / 4)):
+                    batch.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
+            batch = resize_batch_images(batch, self.patch_size)
+
+            batch = normalize_batch_images(batch, 'zeromean')
 
             generated = self.vae_complete.predict(batch)
 
@@ -397,8 +422,9 @@ class GAVAE_SIM(ModelGAVAE):
             # print("Epoch: %d [Disc. loss: %f, acc.: %.2f%%]" % (epoch, loss_disc[0], 100 * loss_disc[1]))
 
             # IMPROVE 2. use noisy labels
-            labels_real = np.ones(self.batch_size, np.float32) + np.subtract(np.multiply(np.random.rand(self.batch_size), 0.3 ), 0.15)
-            labels_fake = np.zeros(self.batch_size, np.float32) + np.multiply(np.random.rand(self.batch_size), 0.3 )
+            labels_real = np.ones(self.batch_size, np.float32) + np.subtract(
+                np.multiply(np.random.rand(self.batch_size), 0.3), 0.15)
+            labels_fake = np.zeros(self.batch_size, np.float32) + np.multiply(np.random.rand(self.batch_size), 0.3)
 
             # IMPROVE 3. train gen/disc depending on each other:
             if train_disc:
@@ -414,34 +440,33 @@ class GAVAE_SIM(ModelGAVAE):
 
             # we will train generator until it will overcome 1.5* of disc loss
             # as generator takes usually more time to train
-            if loss_gen[0] <= 1.5 * loss_disc[0]:
-                train_disc = True
-            else:
-                train_disc = False
-
+            # if loss_gen[0] <= 2.5 * loss_disc[0]:
+            #     train_disc = True
+            # else:
+            #     train_disc = False
 
             # Save interval
             if epoch % save_interval == 0:
-                mu = self.vae_enc.predict(batch_test)
+                # mu = self.vae_enc.predict(batch_test)
                 if epoch == 0:
                     ims = np.reshape(batch_test[0], (160, 160))
-                    plt.imshow(ims, cmap='gray')
-                    plt.show()
+                    plt.imsave('./images/0/0_baseline.png', ims, cmap='gray')
+                    ims = np.reshape(batch_test[4], (160, 160))
+                    plt.imsave('./images/1/0_baseline.png', ims, cmap='gray')
+                    ims = np.reshape(batch_test[8], (160, 160))
+                    plt.imsave('./images/2/0_baseline.png', ims, cmap='gray')
+                    ims = np.reshape(batch_test[12], (160, 160))
+                    plt.imsave('./images/3/0_baseline.png', ims, cmap='gray')
                 # TODO: logging
                 ims = self.vae_complete.predict(batch_test)
-                ims = np.reshape(ims[0],(160,160))
-                plt.imshow(ims, cmap='gray')
-                plt.show()
+                imss = np.reshape(ims[0], (160, 160))
+                plt.imsave('./images/0/' + str(epoch) + '.png', imss, cmap='gray')
+                imss = np.reshape(ims[4], (160, 160))
+                plt.imsave('./images/1/' + str(epoch) + '.png', imss, cmap='gray')
+                imss = np.reshape(ims[8], (160, 160))
+                plt.imsave('./images/2/' + str(epoch) + '.png', imss, cmap='gray')
+                imss = np.reshape(ims[12], (160, 160))
+                plt.imsave('./images/3/' + str(epoch) + '.png', imss, cmap='gray')
 
-                mu[0][0] = mu[0][0] * 10.6
-                mu[0][1] = mu[0][1] * -0.9
-                imh = self.vae_dec.predict(mu)
+                self.generator_combined.save(model_file)
 
-                imh0 = np.reshape(imh[0], (160, 160))
-                plt.imshow(imh0, cmap='gray')
-                plt.show()
-                # imh1 = np.reshape(imh[1], (160, 160))
-                # plt.imshow(imh1, cmap='gray')
-                # plt.show()
-
-                self.generator_combined.save('test.h5')
