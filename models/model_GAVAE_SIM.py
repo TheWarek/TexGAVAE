@@ -7,23 +7,19 @@ import keras
 from keras.models import Sequential, Model
 from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.layers import BatchNormalization
-from keras.layers.advanced_activations import LeakyReLU
+from keras.layers import LeakyReLU
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Lambda
 from keras.optimizers import Adam, SGD, Adadelta
-from keras import regularizers
 
-from keras.models import load_model
-
-from scipy.misc import imread
 import os.path
 
 from matplotlib import pyplot as plt
 
 import numpy as np
+import random
 
 from data_loader import TexDAT
-from data_loader import resize_batch_images
-import sklearn.preprocessing as prep
+from data_loader import resize_batch_images, normalize_batch_images
 
 def new_custom_loss(y_true, y_pred, sigma, kernel):
     return 0
@@ -37,10 +33,10 @@ class GAVAE_SIM(ModelGAVAE):
         self.texdat.load_data(only_paths=True)
 
         # Init TODO: research the middle layer
-        self.m = batch_size #1 #50
-        self.n_z = 128
+        self.m = self.batch_size #1 #50
+        self.n_z = 256
 
-        self.dropout = 0.1
+        self.dropout = 0.2
 
         # Optimizer
         self.optimizer = Adam(lr=lr, beta_1=0.9)
@@ -122,6 +118,7 @@ class GAVAE_SIM(ModelGAVAE):
         #self.vae_enc.summary()
 
         log_path = './logs'
+        # TODO : how to using tensorflow implementation of keras
         self.callback = keras.callbacks.TensorBoard(log_dir=log_path, histogram_freq=0,
                                     write_graph=True, write_images=False)
         self.callback.set_model(self.generator_combined)
@@ -134,7 +131,7 @@ class GAVAE_SIM(ModelGAVAE):
         # compute the KL loss
         kl_loss = - 0.5 * K.mean(1 + self.log_sigma - K.square(self.mu) - K.square(K.exp(self.log_sigma)), axis=-1)
         # return the average loss over all images in batch
-        total_loss = K.mean(reconstruction_loss + kl_loss)
+        total_loss = K.mean(reconstruction_loss + kl_loss * 0.1)
         return total_loss
 
     def gen_loss(self, y_true, y_pred):
@@ -144,7 +141,7 @@ class GAVAE_SIM(ModelGAVAE):
         # compute the KL loss
         kl_loss = - 0.5 * K.mean(1 + self.log_sigma - K.square(self.mu) - K.square(K.exp(self.log_sigma)), axis=-1)
         # return the average loss over all images in batch
-        total_loss = K.mean(reconstruction_loss + kl_loss)
+        total_loss = K.mean(reconstruction_loss + kl_loss * 0.1)
         return total_loss
 
     def disc_loss(selfself, y_true, y_pred):
@@ -371,9 +368,13 @@ class GAVAE_SIM(ModelGAVAE):
 
         # img = np.reshape(img, (1, 160, 160, 1))
 
-        batch_test = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
-                                                          self.patch_size, normalize='zeromean')
-        #batch = batch_test
+        # batch_test = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
+        #                                                   self.patch_size, normalize='zeromean')
+        # batch = batch_test
+
+        sorted_list = list(self.texdat.train.objectsPaths.items())
+        sorted_list.sort()
+
 
         train_disc = True
         train_gen = True
@@ -386,8 +387,18 @@ class GAVAE_SIM(ModelGAVAE):
         for epoch in range(epochs):
             # TODO: code here
 
-            batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
-                                                              self.patch_size, normalize='zeromean')
+            # batch = self.texdat.next_classic_batch_from_paths(self.texdat.train.objectsPaths, self.batch_size,
+            #                                                   self.patch_size, normalize='zeromean')
+
+            batch = []
+            textures_max_id = len(self.texdat.train.objectsPaths.items()) - 1
+            texture_id = random.randint(0, textures_max_id)
+            for i in range(self.batch_size):
+                batch.append(
+                    self.texdat.read_segment(list(self.texdat.train.objectsPaths.items())[texture_id][1].paths[0]))
+            batch = resize_batch_images(batch, self.patch_size)
+
+            batch = normalize_batch_images(batch, 'zeromean')
 
             generated = self.vae_complete.predict(batch)
 
@@ -414,34 +425,27 @@ class GAVAE_SIM(ModelGAVAE):
 
             # we will train generator until it will overcome 1.5* of disc loss
             # as generator takes usually more time to train
-            if loss_gen[0] <= 1.5 * loss_disc[0]:
-                train_disc = True
-            else:
-                train_disc = False
+            # if loss_gen[0] <= 2.5 * loss_disc[0]:
+            #     train_disc = True
+            # else:
+            #     train_disc = False
 
 
             # Save interval
             if epoch % save_interval == 0:
-                mu = self.vae_enc.predict(batch_test)
-                if epoch == 0:
-                    ims = np.reshape(batch_test[0], (160, 160))
-                    plt.imshow(ims, cmap='gray')
-                    plt.show()
+                batch_test = []
+                for i in range(self.batch_size):
+                    batch_test.append(self.texdat.read_segment(sorted_list[texture_id][1].paths[0]))
+                batch_test = resize_batch_images(batch_test, self.patch_size)
+                batch_test = normalize_batch_images(batch_test, 'zeromean')
+
+                # mu = self.vae_enc.predict(batch_test)
+                # if epoch == 0:
+                ims = np.reshape(batch_test[0], (160, 160))
+                plt.imsave('./images/'+str(epoch)+'_baseline.png',ims, cmap='gray')
                 # TODO: logging
                 ims = self.vae_complete.predict(batch_test)
                 ims = np.reshape(ims[0],(160,160))
-                plt.imshow(ims, cmap='gray')
-                plt.show()
-
-                mu[0][0] = mu[0][0] * 10.6
-                mu[0][1] = mu[0][1] * -0.9
-                imh = self.vae_dec.predict(mu)
-
-                imh0 = np.reshape(imh[0], (160, 160))
-                plt.imshow(imh0, cmap='gray')
-                plt.show()
-                # imh1 = np.reshape(imh[1], (160, 160))
-                # plt.imshow(imh1, cmap='gray')
-                # plt.show()
+                plt.imsave('./images/'+str(epoch)+'.png',ims, cmap='gray')
 
                 self.generator_combined.save('test.h5')
