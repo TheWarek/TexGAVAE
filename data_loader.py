@@ -1,6 +1,7 @@
 from _tracemalloc import start
 
 import numpy as np
+from scipy.misc import imread
 import os
 import random
 import matplotlib.pyplot as plt
@@ -84,6 +85,20 @@ class TexDAT:
 
         except IOError:
             print("File {:s} does not exist".format(abspath))
+
+    @staticmethod
+    def read_image_patch(abspath:str, patch_size:tuple=(160,160), mode:str='L'):
+        if not os.path.exists(abspath):
+            return np.zeros(patch_size)
+        image = imread(abspath, mode=mode)
+        h = image.shape[0]
+        w = image.shape[1]
+        row = random.randint(0,h-patch_size[0])
+        col = random.randint(0,w-patch_size[1])
+
+        patch = image[row:row+patch_size[0], col:col+patch_size[1]] / 256
+        return np.array(patch).astype(np.float32)
+
 
     def read_data_to_array(self, abspath=None, only_paths: bool = False, train=False, test=False):
         if not os.path.exists(abspath):
