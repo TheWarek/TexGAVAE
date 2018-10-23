@@ -106,6 +106,7 @@ class GAVAE_SIM(ModelGAVAE):
             self.vae_output = l_1
             self.vae_complete = Model(self.input, self.vae_output, name='vae_complete')
 
+        # Second forward pass through encoder
         self.mu_2, self.log_sigma_2 = self.vae_enc(self.vae_complete(self.input))
 
         #160x160
@@ -133,20 +134,29 @@ class GAVAE_SIM(ModelGAVAE):
         valid = self.discriminator(img)
 
         self.custom_loss = self.custom_gen_loss_wrapper(self.input)
+
         self.generator_combined = Model(self.input, valid, name='generator_combined')
         self.generator_combined.compile(loss=self.custom_loss,
                                         optimizer=self.optimizer,
-                                        metrics=['accuracy'])
-        self.summary = tf.summary.merge_all()
-        #self.discriminator.summary()
-        #self.generator_combined.summary()
-        #self.vae_complete.summary()
-        #self.vae_enc.summary()
+                                        metrics=[self.margin_loss, self.meansquare_loss,
+                                                 self. reconstruction_loss, self.kl_loss])
 
         log_path = './logs'
         self.callback = self.GAVAE_tensorboard(log_dir=log_path, histogram_freq=0,
                                     batch_size=self.batch_size, write_graph=True, write_images=False)
         self.callback.set_model(self.generator_combined)
+
+    def margin_loss(self, y_true, y_pred):
+        return self.margin_loss
+
+    def meansquare_loss(self, y_true, y_pred):
+        return self.meansquare_loss
+
+    def reconstruction_loss(self, y_true, y_pred):
+        return self.reconstruction_loss
+
+    def kl_loss(self, y_true, y_pred):
+        return self.kl_loss
 
     def losses(self):
         result = {}
@@ -176,19 +186,25 @@ class GAVAE_SIM(ModelGAVAE):
         # encoder loss
         z2 = Lambda(self.sample_z)([self.mu_2, self.log_sigma_2])
         self.margin_loss = K.mean(K.minimum(0., K.sqrt(K.sum(K.square(z2 - self.z),axis=1)) - self.margin)) # better name for margin loss
-        # tf.summary.scalar('margin_loss', self.margin_loss)
+
         # compute the binary crossentropy
         # trueseems_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
         self.meansquare_loss = K.mean(K.square(y_pred - y_true))
-        # tf.summary.scalar('true_loss',trueseems_loss)
+
         reconstruction_loss = -K.sum(batch_input * K.log(1e-5 + self.vae_output) + (1-batch_input) * K.log(1e-5 + 1 - self.vae_output), 1)
         self.reconstruction_loss = K.mean(reconstruction_loss) / (self.patch_size[0]*self.patch_size[1])
-        # tf.summary.scalar('reconstruction_loss',reconstruction_loss)
+
         # compute the KL loss
         self.kl_loss = - 0.5 * K.mean(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
-        # tf.summary.scalar('kl_loss', kl_loss)
+
         # return the average loss over all images in batch
         total_loss = K.mean(self.meansquare_loss + 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
+
+        # tf.summary.scalar('margin_loss', self.margin_loss)
+        # tf.summary.scalar('true_loss', self.meansquare_loss)
+        # tf.summary.scalar('reconstruction_loss', self.reconstruction_loss)
+        # tf.summary.scalar('kl_loss', self.kl_loss)
+
         return total_loss
 
     def disc_loss(selfself, y_true, y_pred):
@@ -395,13 +411,13 @@ class GAVAE_SIM(ModelGAVAE):
         return
 
     # Tensorboard (Keras version)
-    def write_log(self, callback, scope, names, logs, batch_no):
-        with tf.name_scope(scope):
-            for name, value in zip(names, logs):
+    def write_log(self, callback, scope, dict, batch_no):
+        with K.name_scope(scope):
+            for key in dict:
                 summary = tf.Summary()
                 summary_value = summary.value.add()
-                summary_value.simple_value = value
-                summary_value.tag = scope + name
+                summary_value.simple_value = dict[key]
+                summary_value.tag = scope + '/' + key
                 callback.writer.add_summary(summary, batch_no)
                 callback.writer.flush()
 
@@ -425,7 +441,8 @@ class GAVAE_SIM(ModelGAVAE):
         indices = [31, 103, 137, 194]
         for ind in indices:
             for i in range(int(self.batch_size / 4)):
-                batch_test.append(self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
+                #batch_test.append(self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
+                batch_test.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
         batch_test = resize_batch_images(batch_test, self.patch_size)
 
         # batch_test = normalize_batch_images(batch_test, 'minmax')
@@ -447,7 +464,8 @@ class GAVAE_SIM(ModelGAVAE):
             batch = []
             for ind in indices:
                 for i in range(int(self.batch_size / 4)):
-                    batch.append(self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
+                    # batch.append(self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
+                    batch.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
             batch = resize_batch_images(batch, self.patch_size)
 
             # batch = normalize_batch_images(batch, 'minmax')
@@ -475,13 +493,19 @@ class GAVAE_SIM(ModelGAVAE):
 
                 loss_gen = self.generator_combined.train_on_batch(batch, labels_real)
                 print("Epoch: %d [Gen. loss: %f, acc.: %.2f%%]" % (epoch, loss_gen[0], 100 * loss_gen[1]))
-                self.callback.on_epoch_end(epoch, self.losses())
+                # self.callback.on_batch_end(epoch, self.losses())
+
+
             # we will train generator until it will overcome 1.5* of disc loss
             # as generator takes usually more time to train
             # if loss_gen[0] <= 2.5 * loss_disc[0]:
             #     train_disc = True
             # else:
             #     train_disc = False
+
+            if epoch % (save_interval >> 2):
+                l_dict = dict(zip(self.generator_combined.metrics_names, loss_gen))
+                self.write_log(self.callback, 'test', l_dict, epoch)
 
             # Save interval
             if epoch % save_interval == 0:
