@@ -57,7 +57,7 @@ class GAVAE_SIM(ModelGAVAE):
 
         # Init TODO: research the middle layer
         self.m = batch_size #1 #50
-        self.n_z = 256
+        self.n_z = 128
         self.margin = margin
         self.dropout = 0.1
 
@@ -171,9 +171,9 @@ class GAVAE_SIM(ModelGAVAE):
         # reconstruction_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
         reconstruction_loss = K.mean(K.square(y_pred - y_true))
         # compute the KL loss
-        kl_loss = - 0.5 * K.mean(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
+        kl_loss = - 0.5 * K.sum(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
         # return the average loss over all images in batch
-        total_loss = K.mean(reconstruction_loss + 0.02 * kl_loss)
+        total_loss = K.mean(reconstruction_loss + 0.05 * kl_loss)
         return total_loss
 
     # Custom loss with additional parameters (other than y_pred y_true): How to do it
@@ -195,10 +195,11 @@ class GAVAE_SIM(ModelGAVAE):
         self.reconstruction_loss = K.mean(reconstruction_loss) / (self.patch_size[0]*self.patch_size[1])
 
         # compute the KL loss
-        self.kl_loss = - 0.5 * K.mean(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
+        self.kl_loss = - 0.5 * K.sum(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
 
         # return the average loss over all images in batch
-        total_loss = K.mean(self.meansquare_loss + 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
+        # total_loss = K.mean(self.meansquare_loss + 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
+        total_loss = K.mean(0.05 * self.kl_loss + self.meansquare_loss)
 
         # tf.summary.scalar('margin_loss', self.margin_loss)
         # tf.summary.scalar('true_loss', self.meansquare_loss)
@@ -285,7 +286,7 @@ class GAVAE_SIM(ModelGAVAE):
                            dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                            bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                            activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
-        list.append(Activation('sigmoid'))
+        #list.append(Activation('sigmoid'))
 
         return list
 
@@ -438,12 +439,15 @@ class GAVAE_SIM(ModelGAVAE):
         sorted_list.sort()
 
         batch_test = []
-        indices = [31, 103, 137, 194]
+        # indices = [31, 103, 137, 194]
+        #indices = [46, 46, 137, 194]
+        indices = [46, 103, 137, 195]
         for ind in indices:
             for i in range(int(self.batch_size / 4)):
                 #batch_test.append(self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
                 batch_test.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
         batch_test = resize_batch_images(batch_test, self.patch_size)
+        batch_test = normalize_batch_images(batch_test, 'zeromean')
 
         # batch_test = normalize_batch_images(batch_test, 'minmax')
 
@@ -467,6 +471,7 @@ class GAVAE_SIM(ModelGAVAE):
                     # batch.append(self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
                     batch.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
             batch = resize_batch_images(batch, self.patch_size)
+            batch = normalize_batch_images(batch, 'zeromean')
 
             # batch = normalize_batch_images(batch, 'minmax')
 
@@ -513,24 +518,26 @@ class GAVAE_SIM(ModelGAVAE):
                 if epoch == 0:
                     ims = np.reshape(batch_test[0], (160, 160))
                     plt.imsave('./images/0/0_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch_test[1], (160, 160))
+                    ims = np.reshape(batch_test[int(self.batch_size/4)], (160, 160))
                     plt.imsave('./images/1/0_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch_test[2], (160, 160))
+                    ims = np.reshape(batch_test[int(2 * self.batch_size/4)], (160, 160))
                     plt.imsave('./images/2/0_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch_test[3], (160, 160))
+                    ims = np.reshape(batch_test[int(3 * self.batch_size/4)], (160, 160))
                     plt.imsave('./images/3/0_baseline.png', ims, cmap='gray')
                 # TODO: logging
                 ims = self.vae_complete.predict(batch_test)
                 imss = np.reshape(ims[0], (160, 160))
                 plt.imsave('./images/0/' + str(epoch) + '.png', imss, cmap='gray')
-                imss = np.reshape(ims[1], (160, 160))
+                imss = np.reshape(ims[int(self.batch_size/4)], (160, 160))
                 plt.imsave('./images/1/' + str(epoch) + '.png', imss, cmap='gray')
-                imss = np.reshape(ims[2], (160, 160))
+                imss = np.reshape(ims[int(2*self.batch_size/4)], (160, 160))
                 plt.imsave('./images/2/' + str(epoch) + '.png', imss, cmap='gray')
-                imss = np.reshape(ims[3], (160, 160))
+                imss = np.reshape(ims[int(3*self.batch_size/4)], (160, 160))
                 plt.imsave('./images/3/' + str(epoch) + '.png', imss, cmap='gray')
 
                 self.generator_combined.save(model_file)
+                # store just partial model => middle layer
+                self.vae_enc.save('enc.h5')
 
     def test_discriminator(self, model_file, path):
         if os.path.exists(model_file):
