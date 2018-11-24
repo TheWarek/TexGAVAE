@@ -21,7 +21,7 @@ class GAVAE_SIM(ModelGAVAE):
 
         self.m = batch_size
         self.margin = margin
-        self.n_z = 256
+        self.n_z = 6
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
         self.disc_gt = tf.placeholder(tf.float32, [None, ], name="disc_gt")
@@ -203,6 +203,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_3 = tf.layers.dropout(net_3, self.drop_rate)
 
         with tf.variable_scope('layer_4'):
+            # net_4 = tf.image.resize_images(net_3, size=(2*self.mid_shape_16[0], 2*self.mid_shape_16[1]))
             net_4 = tf.layers.conv2d_transpose(net_3, filters=512, kernel_size=7, strides=2,
                                      padding='same', data_format='channels_last')
             net_4 = tf.nn.leaky_relu(net_4)
@@ -210,6 +211,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_4 = tf.layers.dropout(net_4, self.drop_rate)
 
         with tf.variable_scope('layer_5'):
+            # net_5 = tf.image.resize_images(net_4, size=(4 * self.mid_shape_16[0], 4 * self.mid_shape_16[1]))
             net_5 = tf.layers.conv2d_transpose(net_4, filters=384, kernel_size=3, strides=2,
                                      padding='same', data_format='channels_last')
             net_5 = tf.nn.leaky_relu(net_5)
@@ -217,6 +219,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_5 = tf.layers.dropout(net_5, self.drop_rate)
 
         with tf.variable_scope('layer_6'):
+            # net_6 = tf.image.resize_images(net_5, size=(8 * self.mid_shape_16[0], 8 * self.mid_shape_16[1]))
             net_6 = tf.layers.conv2d_transpose(net_5, filters=128, kernel_size=5, strides=2,
                                                padding='same', data_format='channels_last')
             net_6 = tf.nn.leaky_relu(net_6)
@@ -307,6 +310,9 @@ class GAVAE_SIM(ModelGAVAE):
 
             writer = tf.summary.FileWriter('logs/' + model_file + '/', graph=sess.graph)
 
+            summary_disc_1 = tf.summary.merge(self.disc_summaries)
+            summary_gan = tf.summary.merge(self.vae_summaries)
+
             for epoch in range(epochs):
                 print('Epoch {:d}'.format(epoch))
 
@@ -323,7 +329,6 @@ class GAVAE_SIM(ModelGAVAE):
                 vae_output = self.vae_output.eval({self.vae_input: batch})
 
 # training the discriminant
-                summary_disc_1 = tf.summary.merge(self.disc_summaries)
                 _, discriminant_loss, merged = sess.run([self.disc_train_step, self.disc_loss, summary_disc_1], feed_dict={
                     self.vae_input : batch,
                     self.disc_gt : labels_real
@@ -340,7 +345,6 @@ class GAVAE_SIM(ModelGAVAE):
                 print('Disc. on fake {:.6f}'.format(discriminant_loss))
 
 # training the GAVAE
-                summary_gan = tf.summary.merge(self.vae_summaries)
                 _, gavae_loss, merged = sess.run([self.vae_train_step, self.genloss, summary_gan], feed_dict={
                     self.vae_input : batch,
                     self.disc_gt : labels_real
