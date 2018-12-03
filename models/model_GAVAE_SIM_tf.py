@@ -12,7 +12,7 @@ from data_loader import TexDAT
 from data_loader import resize_batch_images, normalize_batch_images
 
 class GAVAE_SIM(ModelGAVAE):
-    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.001, margin=4.5):
+    def __init__(self, data_path, w, h, c, layer_depth, batch_size=32, lr=0.0002, margin=4.5):
         super(GAVAE_SIM, self).__init__(w, h, c, layer_depth, batch_size)
         self.patch_size = (w,h,c)
 
@@ -21,57 +21,68 @@ class GAVAE_SIM(ModelGAVAE):
 
         self.m = batch_size
         self.margin = margin
-        self.n_z = 6
+        self.n_z = 20
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
-        self.disc_gt = tf.placeholder(tf.float32, [None, ], name="disc_gt")
+        # self.disc_gt = tf.placeholder(tf.float32, [None, ], name="disc_gt")
         self.vae_input = tf.placeholder(dtype=tf.float32, shape=[None, w, h, c], name="vae_input")
+        self.dec_input = tf.placeholder(dtype=tf.float32, shape=[None, self.n_z], name="dec_input")
 
         self.disc_summaries = []
         self.vae_summaries = []
 
         with tf.variable_scope('encoders') as scope:
             self.mu_1, self.log_sigma_1, self.z_1 = self.get_vae_encoder_part(self.vae_input, True)  # encoder at the beginning
-            with tf.variable_scope('decoder'):
+            with tf.variable_scope('decoder') as dec_scope:
                 self.vae_output = self.get_vae_decoder_part(self.z_1)
+                dec_scope.reuse_variables()
+                self.dec_output = self.get_vae_decoder_part(self.dec_input)
             scope.reuse_variables()
             self.mu_2, self.log_sigma_2, self.z_2 = self.get_vae_encoder_part(self.vae_output, False)
 
-        with tf.variable_scope('discriminator') as scope:
-            self.discriminator = self.get_discriminator(self.vae_input, True)
-            scope.reuse_variables()
-            self.gavae = self.get_discriminator(self.vae_output, False)
+        # with tf.variable_scope('discriminator') as scope:
+        #     self.discriminator = self.get_discriminator(self.vae_input, True)
+        #     scope.reuse_variables()
+        #     self.gavae = self.get_discriminator(self.vae_output, False)
 
-        self.genloss = self.gen_loss(self.disc_gt, self.gavae)
-        self.disc_loss = self.disc_loss(self.disc_gt, self.discriminator)
+        # self.genloss = self.gen_loss(self.disc_gt, self.gavae)
+        # self.disc_loss = self.disc_loss(self.disc_gt, self.discriminator)
+
+        self.vae_loss = self.__vae_loss()
 
         with tf.variable_scope('optimizers'):
-            self.disc_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.9)
-            self.vae_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.9)
+            # self.disc_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.9)
+            self.vae_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
             self.vae_global_step = tf.Variable(initial_value=0, name='vae_global_step', trainable=False)
             self.vae_train_step = self.vae_optimizer.minimize(
-                loss=self.genloss,
+                loss=self.vae_loss,
                 global_step=self.vae_global_step
             )
-            self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
-            self.disc_train_step = self.disc_optimizer.minimize(
-                loss=self.disc_loss,
-                global_step=self.disc_global_step
-            )
+            # self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
+            # self.disc_train_step = self.disc_optimizer.minimize(
+            #     loss=self.disc_loss,
+            #     global_step=self.disc_global_step
+            # )
 
 
-    def vae_loss(self, y_true, y_pred):
+    def __vae_loss(self):
         # compute the average MSE error, then scale it up, ie. simply sum on all axes
         # mse_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
         with tf.variable_scope('vae_loss'):
-            mse_loss = tf.reduce_mean(tf.square(y_pred - y_true))
+            reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(self.vae_input - self.vae_output)))
+            self.vae_summaries.append(tf.summary.scalar('recon_loss',reconstruction_loss))
             # compute the KL loss
             kl_loss = - 0.5 * tf.reduce_mean(1 + self.log_sigma_1 - tf.square(self.mu_1) - tf.square(tf.exp(self.log_sigma_1)), axis=-1)
+            self.vae_summaries.append(tf.summary.scalar('kl_loss', tf.reduce_mean(kl_loss)))
+            # compute encoder loss
+            encoder_loss = tf.sqrt(tf.reduce_sum(tf.square(self.z_1 - self.z_2)))
+            self.vae_summaries.append(tf.summary.scalar('encoder_loss', encoder_loss))
             # return the average loss over all images in batch
-            total_loss = tf.reduce_mean(mse_loss + 0.02 * kl_loss)
+            total_loss = tf.reduce_mean(reconstruction_loss)
+            self.vae_summaries.append(tf.summary.scalar('total_loss', total_loss))
         return total_loss
 
-    def gen_loss(self, y_true, y_pred):
+    def __gen_loss(self, y_true, y_pred):
         # encoder loss
         with tf.variable_scope('generator_loss'):
             z_2 = self.sample_z([self.mu_2, self.log_sigma_2])
@@ -93,11 +104,11 @@ class GAVAE_SIM(ModelGAVAE):
                 # self.vae_summaries.append(tf.summary.scalar('kl_loss', self.kl_loss))
             with tf.variable_scope('total_mean_loss'):
                 # return the average loss over all images in batch
-                total_loss = tf.reduce_mean(self.meansquare_loss + 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
+                total_loss = tf.reduce_mean(self.meansquare_loss) #+ 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
                 self.vae_summaries.append(tf.summary.scalar('total_loss', total_loss))
         return total_loss
 
-    def disc_loss(self, y_true, y_pred):
+    def __disc_loss(self, y_true, y_pred):
         with tf.variable_scope('discriminant_loss'):
             # reconstruction_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
             reconstruction_loss = tf.reduce_mean(tf.square(y_pred - y_true))
@@ -114,7 +125,7 @@ class GAVAE_SIM(ModelGAVAE):
     # vae encoder mu, log_sigma, sampled_z
     def get_vae_encoder_part(self, input, trainable) -> [tf.Tensor, tf.Tensor, tf.Tensor]:
         with tf.variable_scope('layer_1'):
-            net_1 = tf.layers.conv2d(input, filters=96, kernel_size=3, strides=2,
+            net_1 = tf.layers.conv2d(input, filters=16, kernel_size=5, strides=1,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_1')
             net_1 = tf.nn.leaky_relu(net_1, name='relu_1')
@@ -122,7 +133,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_1 = tf.layers.dropout(net_1, self.drop_rate, name='dropout_1')
 
         with tf.variable_scope('layer_2'):
-            net_2 = tf.layers.conv2d(net_1, filters=128, kernel_size=5, strides=2,
+            net_2 = tf.layers.conv2d(net_1, filters=32, kernel_size=5, strides=1,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_2')
             net_2 = tf.nn.leaky_relu(net_2, name='relu_2')
@@ -130,7 +141,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_2 = tf.layers.dropout(net_2, self.drop_rate, name='dropout_2')
 
         with tf.variable_scope('layer_3'):
-            net_3 = tf.layers.conv2d(net_2, filters=384, kernel_size=3, strides=2,
+            net_3 = tf.layers.conv2d(net_2, filters=64, kernel_size=5, strides=1,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_3')
             net_3 = tf.nn.leaky_relu(net_3, name='relu_3')
@@ -138,38 +149,38 @@ class GAVAE_SIM(ModelGAVAE):
             net_3 = tf.layers.dropout(net_3, self.drop_rate, name='dropout_3')
 
         with tf.variable_scope('layer_4'):
-            net_4 = tf.layers.conv2d(net_3, filters=512, kernel_size=7, strides=1,
+            net_4 = tf.layers.conv2d(net_3, filters=128, kernel_size=5, strides=1,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_4')
             net_4 = tf.nn.leaky_relu(net_4, name='relu_4')
             net_4 = tf.layers.batch_normalization(net_4, momentum=0.8, trainable=trainable, reuse=tf.AUTO_REUSE, name='bn_4')
             net_4 = tf.layers.dropout(net_4, self.drop_rate, name='dropout_5')
 
-        with tf.variable_scope('layer_5'):
-            net_5 = tf.layers.conv2d(net_4, filters=128, kernel_size=1, strides=1,
-                                     padding='same', data_format='channels_last', trainable=trainable,
-                                     reuse=tf.AUTO_REUSE, name='conv_5')
-            net_5 = tf.nn.leaky_relu(net_5, name='relu_5')
-            net_5 = tf.layers.batch_normalization(net_5, momentum=0.8, trainable=trainable, reuse=tf.AUTO_REUSE, name='bn_5')
-            net_5 = tf.layers.dropout(net_5, self.drop_rate, name='dropout_6')
+        # with tf.variable_scope('layer_5'):
+        #     net_5 = tf.layers.conv2d(net_4, filters=64, kernel_size=1, strides=1,
+        #                              padding='same', data_format='channels_last', trainable=trainable,
+        #                              reuse=tf.AUTO_REUSE, name='conv_5')
+        #     net_5 = tf.nn.leaky_relu(net_5, name='relu_5')
+        #     net_5 = tf.layers.batch_normalization(net_5, momentum=0.8, trainable=trainable, reuse=tf.AUTO_REUSE, name='bn_5')
+        #     net_5 = tf.layers.dropout(net_5, self.drop_rate, name='dropout_6')
+        #
+        # with tf.variable_scope('layer_6'):
+        #     net_6 = tf.layers.conv2d(net_5, filters=32, kernel_size=1, strides=1,
+        #                              padding='same', data_format='channels_last', trainable=trainable,
+        #                              reuse=tf.AUTO_REUSE, name='conv_6')
+        #     net_6 = tf.nn.leaky_relu(net_6, name='relu_6')
+        #     net_6 = tf.layers.batch_normalization(net_6, momentum=0.8, trainable=trainable, reuse=tf.AUTO_REUSE, name='bn_6')
+        #     net_6 = tf.layers.dropout(net_6, self.drop_rate, name='dropout_7')
+        #
+        # with tf.variable_scope('layer_7'):
+        #     net_7 = tf.layers.conv2d(net_6, filters=16, kernel_size=1, strides=1,
+        #                              padding='same', data_format='channels_last', trainable=trainable,
+        #                              reuse=tf.AUTO_REUSE, name='conv_7')
+        #     net_7 = tf.nn.leaky_relu(net_7, name='relu_7')
+        #     net_7 = tf.layers.batch_normalization(net_7, momentum=0.8, trainable=trainable, reuse=tf.AUTO_REUSE, name='bn_7')
+        #     net_7 = tf.layers.dropout(net_7, self.drop_rate, name='dropout_7')
 
-        with tf.variable_scope('layer_6'):
-            net_6 = tf.layers.conv2d(net_5, filters=64, kernel_size=1, strides=1,
-                                     padding='same', data_format='channels_last', trainable=trainable,
-                                     reuse=tf.AUTO_REUSE, name='conv_6')
-            net_6 = tf.nn.leaky_relu(net_6, name='relu_6')
-            net_6 = tf.layers.batch_normalization(net_6, momentum=0.8, trainable=trainable, reuse=tf.AUTO_REUSE, name='bn_6')
-            net_6 = tf.layers.dropout(net_6, self.drop_rate, name='dropout_7')
-
-        with tf.variable_scope('layer_7'):
-            net_7 = tf.layers.conv2d(net_6, filters=16, kernel_size=1, strides=1,
-                                     padding='same', data_format='channels_last', trainable=trainable,
-                                     reuse=tf.AUTO_REUSE, name='conv_7')
-            net_7 = tf.nn.leaky_relu(net_7, name='relu_7')
-            net_7 = tf.layers.batch_normalization(net_7, momentum=0.8, trainable=trainable, reuse=tf.AUTO_REUSE, name='bn_7')
-            net_7 = tf.layers.dropout(net_7, self.drop_rate, name='dropout_7')
-
-        flat = tf.layers.flatten(net_7, name='flatten')
+        flat = tf.layers.flatten(net_4, name='flatten')
 
         mu = tf.layers.dense(flat, self.n_z, activation=None, trainable=trainable,
                                  reuse=tf.AUTO_REUSE, name='mu')
@@ -182,60 +193,66 @@ class GAVAE_SIM(ModelGAVAE):
 
     def get_vae_decoder_part(self, input) -> tf.Tensor:
         with tf.variable_scope('layer_1'):
-            net_1 = tf.layers.dense(input, self.mid_shape[0] * self.mid_shape[1] * 16)
+            net_1 = tf.layers.dense(input, self.patch_size[0] * self.patch_size[1], reuse=tf.AUTO_REUSE)
             net_1 = tf.nn.leaky_relu(net_1)
             net_1 = tf.layers.batch_normalization(net_1, momentum=0.8)
 
-        reshape = tf.reshape(net_1, (self.m, self.mid_shape_16[0], self.mid_shape_16[1], self.mid_shape_16[2] ))
+        reshape = tf.reshape(net_1, (self.m, self.patch_size[0], self.patch_size[1], self.patch_size[2] ))
 
         with tf.variable_scope('layer_2'):
-            net_2 = tf.layers.conv2d(reshape, filters=64, kernel_size=1, strides=1,
-                                     padding='same', data_format='channels_last')
+            net_2 = tf.layers.conv2d(reshape, filters=16, kernel_size=5, strides=1,
+                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
             net_2 = tf.nn.leaky_relu(net_2)
             net_2 = tf.layers.batch_normalization(net_2, momentum=0.8)
             net_2 = tf.layers.dropout(net_2, self.drop_rate)
 
         with tf.variable_scope('layer_3'):
-            net_3 = tf.layers.conv2d(net_2, filters=128, kernel_size=1, strides=1,
-                                     padding='same', data_format='channels_last')
+            net_3 = tf.layers.conv2d(net_2, filters=32, kernel_size=5, strides=1,
+                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE, )
             net_3 = tf.nn.leaky_relu(net_3)
             net_3 = tf.layers.batch_normalization(net_3, momentum=0.8)
             net_3 = tf.layers.dropout(net_3, self.drop_rate)
 
         with tf.variable_scope('layer_4'):
             # net_4 = tf.image.resize_images(net_3, size=(2*self.mid_shape_16[0], 2*self.mid_shape_16[1]))
-            net_4 = tf.layers.conv2d_transpose(net_3, filters=512, kernel_size=7, strides=2,
-                                     padding='same', data_format='channels_last')
+            net_4 = tf.layers.conv2d(net_3, filters=64, kernel_size=5, strides=1,
+                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
             net_4 = tf.nn.leaky_relu(net_4)
             net_4 = tf.layers.batch_normalization(net_4, momentum=0.8)
             net_4 = tf.layers.dropout(net_4, self.drop_rate)
 
         with tf.variable_scope('layer_5'):
             # net_5 = tf.image.resize_images(net_4, size=(4 * self.mid_shape_16[0], 4 * self.mid_shape_16[1]))
-            net_5 = tf.layers.conv2d_transpose(net_4, filters=384, kernel_size=3, strides=2,
-                                     padding='same', data_format='channels_last')
+            net_5 = tf.layers.conv2d(net_4, filters=128, kernel_size=5, strides=1,
+                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
             net_5 = tf.nn.leaky_relu(net_5)
             net_5 = tf.layers.batch_normalization(net_5, momentum=0.8)
             net_5 = tf.layers.dropout(net_5, self.drop_rate)
 
         with tf.variable_scope('layer_6'):
             # net_6 = tf.image.resize_images(net_5, size=(8 * self.mid_shape_16[0], 8 * self.mid_shape_16[1]))
-            net_6 = tf.layers.conv2d_transpose(net_5, filters=128, kernel_size=5, strides=2,
-                                               padding='same', data_format='channels_last')
-            net_6 = tf.nn.leaky_relu(net_6)
-            net_6 = tf.layers.batch_normalization(net_6, momentum=0.8)
-            net_6 = tf.layers.dropout(net_6, self.drop_rate)
-
-        with tf.variable_scope('layer_7'):
-            net_7 = tf.layers.conv2d(net_6, filters=96, kernel_size=3, strides=1,
-                                               padding='same', data_format='channels_last')
-            net_7 = tf.nn.leaky_relu(net_7)
-            net_7 = tf.layers.batch_normalization(net_7, momentum=0.8)
-
-        with tf.variable_scope('out_layer'):
-            out = tf.layers.conv2d(net_7, filters=1, kernel_size=1, strides=1,
-                                   padding='same', data_format='channels_last', activation=tf.nn.sigmoid)
-
+            net_6 = tf.layers.conv2d(net_5, filters=1, kernel_size=1, strides=1,
+                                               padding='same', data_format='channels_last', activation=tf.nn.sigmoid, reuse=tf.AUTO_REUSE)
+        #     net_6 = tf.nn.leaky_relu(net_6)
+        #     net_6 = tf.layers.batch_normalization(net_6, momentum=0.8)
+        #     net_6 = tf.layers.dropout(net_6, self.drop_rate)
+        #
+        # with tf.variable_scope('layer_7'):
+        #     net_7 = tf.layers.conv2d(net_6, filters=64, kernel_size=3, strides=1,
+        #                                        padding='same', data_format='channels_last')
+        #     net_7 = tf.nn.leaky_relu(net_7)
+        #     net_7 = tf.layers.batch_normalization(net_7, momentum=0.8)
+        #
+        # with tf.variable_scope('layer_8'):
+        #     net_8 = tf.layers.conv2d(net_7, filters=32, kernel_size=3, strides=1,
+        #                                        padding='same', data_format='channels_last')
+        #     net_8 = tf.nn.leaky_relu(net_8)
+        #     net_8 = tf.layers.batch_normalization(net_8, momentum=0.8)
+        #
+        # with tf.variable_scope('out_layer'):
+        #     out = tf.layers.conv2d(net_8, filters=1, kernel_size=1, strides=1,
+        #                            padding='same', data_format='channels_last', activation=tf.nn.sigmoid)
+        out = net_6
         return out
 
     def get_discriminator(self, input, trainable):
@@ -276,20 +293,20 @@ class GAVAE_SIM(ModelGAVAE):
 
         return dense
 
-    def train(self, epochs, model_file, save_interval=50):
+    def train(self, epochs, model_file, save_interval=50, log_interval=20):
         sorted_list = list(self.texdat.train.objectsPaths.items())
         sorted_list.sort()
 
         batch_test = []
-        indices = [31, 103, 137, 194]
+        indices = [31]#, 100, 120, 198]
         for ind in indices:
-            for i in range(int(self.batch_size / 4)):
+            for i in range(int(self.batch_size)):# / 4)):
                 batch_test.append(
                     self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
         batch_test = resize_batch_images(batch_test, self.patch_size)
 
         save_path = 'model/' + model_file + '/'
-        saver = tf.train.Saver(max_to_keep=10)
+        saver = tf.train.Saver(max_to_keep=5)
         if not os.path.exists(save_path):
             os.makedirs(save_path)
         model_ckpt = os.path.join(save_path, 'checkpoint')
@@ -310,73 +327,101 @@ class GAVAE_SIM(ModelGAVAE):
 
             writer = tf.summary.FileWriter('logs/' + model_file + '/', graph=sess.graph)
 
-            summary_disc_1 = tf.summary.merge(self.disc_summaries)
-            summary_gan = tf.summary.merge(self.vae_summaries)
+            # summary_disc_1 = tf.summary.merge(self.disc_summaries)
+            summary_vae = tf.summary.merge(self.vae_summaries)
 
             for epoch in range(epochs):
                 print('Epoch {:d}'.format(epoch))
 
                 batch = []
                 for ind in indices:
-                    for i in range(int(self.batch_size / 4)):
+                    for i in range(int(self.batch_size)):# / 4)):
                         batch.append(
                             self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
                 batch = resize_batch_images(batch, self.patch_size)
 
-                labels_real = np.ones(self.batch_size, np.float32) + np.subtract(np.multiply(np.random.rand(self.batch_size), 0.3), 0.15)
-                labels_fake = np.zeros(self.batch_size, np.float32) + np.multiply(np.random.rand(self.batch_size), 0.3)
+                # labels_real = np.ones(self.batch_size, np.float32) + np.subtract(np.multiply(np.random.rand(self.batch_size), 0.3), 0.15)
+                # labels_fake = np.zeros(self.batch_size, np.float32) + np.multiply(np.random.rand(self.batch_size), 0.3)
+                #
+                # vae_output = self.vae_output.eval({self.vae_input: batch})
 
-                vae_output = self.vae_output.eval({self.vae_input: batch})
+                # training the discriminant
+                #                 _, discriminant_loss, merged = sess.run([self.disc_train_step, self.disc_loss, summary_disc_1], feed_dict={
+                #                     self.vae_input : batch,
+                #                     self.disc_gt : labels_real,
+                #                     self.drop_rate: 0.6
+                #                 })
+                #                 if epoch % save_interval == 0:
+                #                     writer.add_summary(merged, global_step=epoch)
+                #                 print('Disc. on real {:.6f}'.format(discriminant_loss))
+                #                 _, discriminant_loss, merged = sess.run([self.disc_train_step, self.disc_loss, summary_disc_1], feed_dict={
+                #                     self.vae_input : vae_output,
+                #                     self.disc_gt : labels_fake,
+                #                     self.drop_rate: 0.6
+                #                 })
+                #                 if epoch % save_interval == 0:
+                #                     writer.add_summary(merged, global_step=epoch)
+                #                 print('Disc. on fake {:.6f}'.format(discriminant_loss))
 
-# training the discriminant
-                _, discriminant_loss, merged = sess.run([self.disc_train_step, self.disc_loss, summary_disc_1], feed_dict={
+                # training the GAVAE
+                _, gavae_loss, merged = sess.run([self.vae_train_step, self.vae_loss, summary_vae], feed_dict={
                     self.vae_input : batch,
-                    self.disc_gt : labels_real
+                    self.drop_rate : 0.4
                 })
-                if epoch % save_interval == 0:
-                    writer.add_summary(merged, global_step=epoch)
-                print('Disc. on real {:.6f}'.format(discriminant_loss))
-                _, discriminant_loss, merged = sess.run([self.disc_train_step, self.disc_loss, summary_disc_1], feed_dict={
-                    self.vae_input : vae_output,
-                    self.disc_gt : labels_fake
-                })
-                if epoch % save_interval == 0:
-                    writer.add_summary(merged, global_step=epoch)
-                print('Disc. on fake {:.6f}'.format(discriminant_loss))
-
-# training the GAVAE
-                _, gavae_loss, merged = sess.run([self.vae_train_step, self.genloss, summary_gan], feed_dict={
-                    self.vae_input : batch,
-                    self.disc_gt : labels_real
-                })
-                if epoch % save_interval == 0:
-                    writer.add_summary(merged, global_step = epoch)
                 print('Gavae {:.6f}'.format(gavae_loss))
 
+# log + test for results
                 if epoch % save_interval == 0:
                     save_path_local = saver.save(sess=sess, save_path=model_ckpt, global_step=epoch)
                     print('Model saved to file as {:s}'.format(save_path_local))
 
-                if epoch % save_interval == 0:
+                if epoch % log_interval == 0:
+                    writer.add_summary(merged, global_step = epoch)
+                if epoch % log_interval == 0:
                     if epoch == 0:
+                        if not os.path.exists('./images/0'):
+                            os.makedirs('./images/0')
+                        if not os.path.exists('./images/1'):
+                            os.makedirs('./images/1')
+                        if not os.path.exists('./images/2'):
+                            os.makedirs('./images/2')
+                        if not os.path.exists('./images/3'):
+                            os.makedirs('./images/3')
+
                         ims = np.reshape(batch_test[0], (160, 160))
                         plt.imsave('./images/0/0_baseline.png', ims, cmap='gray')
-                        ims = np.reshape(batch_test[1], (160, 160))
-                        plt.imsave('./images/1/0_baseline.png', ims, cmap='gray')
-                        ims = np.reshape(batch_test[2], (160, 160))
-                        plt.imsave('./images/2/0_baseline.png', ims, cmap='gray')
                         ims = np.reshape(batch_test[3], (160, 160))
+                        plt.imsave('./images/1/0_baseline.png', ims, cmap='gray')
+                        ims = np.reshape(batch_test[6], (160, 160))
+                        plt.imsave('./images/2/0_baseline.png', ims, cmap='gray')
+                        ims = np.reshape(batch_test[9], (160, 160))
                         plt.imsave('./images/3/0_baseline.png', ims, cmap='gray')
                     # TODO: logging
-                    ims = self.vae_output.eval(feed_dict={
+                    latent = self.z_1.eval(feed_dict={
                         self.vae_input : batch_test
+                    })
+                    latent += 0.1
+                    generated = self.dec_output.eval(feed_dict={
+                        self.dec_input : latent
+                    })
+
+                    ims = self.vae_output.eval(feed_dict={
+                        self.vae_input : batch_test,
                     })
                     imss = np.reshape(ims[0], (160, 160))
                     plt.imsave('./images/0/' + str(epoch) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[1], (160, 160))
-                    plt.imsave('./images/1/' + str(epoch) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[2], (160, 160))
-                    plt.imsave('./images/2/' + str(epoch) + '.png', imss, cmap='gray')
                     imss = np.reshape(ims[3], (160, 160))
+                    plt.imsave('./images/1/' + str(epoch) + '.png', imss, cmap='gray')
+                    imss = np.reshape(ims[6], (160, 160))
+                    plt.imsave('./images/2/' + str(epoch) + '.png', imss, cmap='gray')
+                    imss = np.reshape(ims[9], (160, 160))
                     plt.imsave('./images/3/' + str(epoch) + '.png', imss, cmap='gray')
 
+                    imss = np.reshape(generated[0], (160, 160))
+                    plt.imsave('./images/0/' + str(epoch) + '_z.png', imss, cmap='gray')
+                    imss = np.reshape(generated[3], (160, 160))
+                    plt.imsave('./images/1/' + str(epoch) + '_z.png', imss, cmap='gray')
+                    imss = np.reshape(generated[6], (160, 160))
+                    plt.imsave('./images/2/' + str(epoch) + '_z.png', imss, cmap='gray')
+                    imss = np.reshape(generated[9], (160, 160))
+                    plt.imsave('./images/3/' + str(epoch) + '_z.png', imss, cmap='gray')
