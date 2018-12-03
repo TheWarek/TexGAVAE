@@ -17,11 +17,11 @@ class GAVAE_SIM(ModelGAVAE):
         self.patch_size = (w,h,c)
 
         self.texdat = TexDAT(data_path, self.batch_size)
-        self.texdat.load_data(only_paths=True)
+        self.texdat.load_images(False)
 
         self.m = batch_size
         self.margin = margin
-        self.n_z = 20
+        self.n_z = 1000
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
         # self.disc_gt = tf.placeholder(tf.float32, [None, ], name="disc_gt")
@@ -69,16 +69,17 @@ class GAVAE_SIM(ModelGAVAE):
         # compute the average MSE error, then scale it up, ie. simply sum on all axes
         # mse_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
         with tf.variable_scope('vae_loss'):
-            reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(self.vae_input - self.vae_output)))
-            self.vae_summaries.append(tf.summary.scalar('recon_loss',reconstruction_loss))
+            reconstruction_loss = tf.reduce_sum(tf.div(tf.abs(self.vae_input - self.vae_output), (tf.abs(self.vae_input) + tf.abs(self.vae_output))))
+            self.vae_summaries.append(tf.summary.scalar('recon_loss',tf.reduce_mean(reconstruction_loss)))
             # compute the KL loss
             kl_loss = - 0.5 * tf.reduce_mean(1 + self.log_sigma_1 - tf.square(self.mu_1) - tf.square(tf.exp(self.log_sigma_1)), axis=-1)
             self.vae_summaries.append(tf.summary.scalar('kl_loss', tf.reduce_mean(kl_loss)))
             # compute encoder loss
-            encoder_loss = tf.sqrt(tf.reduce_sum(tf.square(self.z_1 - self.z_2)))
+            encoder_loss = tf.reduce_mean(tf.square(self.z_1 - self.z_2))
             self.vae_summaries.append(tf.summary.scalar('encoder_loss', encoder_loss))
             # return the average loss over all images in batch
-            total_loss = tf.reduce_mean(reconstruction_loss)
+            total_loss = tf.reduce_mean(reconstruction_loss + kl_loss + encoder_loss)
+
             self.vae_summaries.append(tf.summary.scalar('total_loss', total_loss))
         return total_loss
 
@@ -133,7 +134,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_1 = tf.layers.dropout(net_1, self.drop_rate, name='dropout_1')
 
         with tf.variable_scope('layer_2'):
-            net_2 = tf.layers.conv2d(net_1, filters=32, kernel_size=5, strides=1,
+            net_2 = tf.layers.conv2d(net_1, filters=32, kernel_size=5, strides=2,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_2')
             net_2 = tf.nn.leaky_relu(net_2, name='relu_2')
@@ -141,7 +142,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_2 = tf.layers.dropout(net_2, self.drop_rate, name='dropout_2')
 
         with tf.variable_scope('layer_3'):
-            net_3 = tf.layers.conv2d(net_2, filters=64, kernel_size=5, strides=1,
+            net_3 = tf.layers.conv2d(net_2, filters=64, kernel_size=5, strides=2,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_3')
             net_3 = tf.nn.leaky_relu(net_3, name='relu_3')
@@ -149,7 +150,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_3 = tf.layers.dropout(net_3, self.drop_rate, name='dropout_3')
 
         with tf.variable_scope('layer_4'):
-            net_4 = tf.layers.conv2d(net_3, filters=128, kernel_size=5, strides=1,
+            net_4 = tf.layers.conv2d(net_3, filters=128, kernel_size=5, strides=2,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_4')
             net_4 = tf.nn.leaky_relu(net_4, name='relu_4')
@@ -193,38 +194,40 @@ class GAVAE_SIM(ModelGAVAE):
 
     def get_vae_decoder_part(self, input) -> tf.Tensor:
         with tf.variable_scope('layer_1'):
-            net_1 = tf.layers.dense(input, self.patch_size[0] * self.patch_size[1], reuse=tf.AUTO_REUSE)
+            net_1 = tf.layers.dense(input, self.mid_shape[0] * self.mid_shape[1], reuse=tf.AUTO_REUSE)
             net_1 = tf.nn.leaky_relu(net_1)
             net_1 = tf.layers.batch_normalization(net_1, momentum=0.8)
 
-        reshape = tf.reshape(net_1, (self.m, self.patch_size[0], self.patch_size[1], self.patch_size[2] ))
+        reshape = tf.reshape(net_1, (self.m, self.mid_shape[0], self.mid_shape[1], self.mid_shape[2]))
 
         with tf.variable_scope('layer_2'):
             net_2 = tf.layers.conv2d(reshape, filters=16, kernel_size=5, strides=1,
-                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
+                                     padding='same', data_format='channels_last')
             net_2 = tf.nn.leaky_relu(net_2)
             net_2 = tf.layers.batch_normalization(net_2, momentum=0.8)
             net_2 = tf.layers.dropout(net_2, self.drop_rate)
 
         with tf.variable_scope('layer_3'):
-            net_3 = tf.layers.conv2d(net_2, filters=32, kernel_size=5, strides=1,
-                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE, )
+            net_3 = tf.image.resize_images(net_2, size=(2 * self.mid_shape_16[0], 2 * self.mid_shape_16[1]))
+            net_3 = tf.layers.conv2d(net_3, filters=32, kernel_size=5, strides=1,
+                                     padding='same', data_format='channels_last')
             net_3 = tf.nn.leaky_relu(net_3)
             net_3 = tf.layers.batch_normalization(net_3, momentum=0.8)
             net_3 = tf.layers.dropout(net_3, self.drop_rate)
 
         with tf.variable_scope('layer_4'):
-            # net_4 = tf.image.resize_images(net_3, size=(2*self.mid_shape_16[0], 2*self.mid_shape_16[1]))
-            net_4 = tf.layers.conv2d(net_3, filters=64, kernel_size=5, strides=1,
-                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
+
+            net_4 = tf.image.resize_images(net_3, size=(4 * self.mid_shape_16[0], 4 * self.mid_shape_16[1]))
+            net_4 = tf.layers.conv2d(net_4, filters=64, kernel_size=5, strides=1,
+                                     padding='same', data_format='channels_last')
             net_4 = tf.nn.leaky_relu(net_4)
             net_4 = tf.layers.batch_normalization(net_4, momentum=0.8)
             net_4 = tf.layers.dropout(net_4, self.drop_rate)
 
         with tf.variable_scope('layer_5'):
-            # net_5 = tf.image.resize_images(net_4, size=(4 * self.mid_shape_16[0], 4 * self.mid_shape_16[1]))
-            net_5 = tf.layers.conv2d(net_4, filters=128, kernel_size=5, strides=1,
-                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
+            net_5 = tf.image.resize_images(net_4, size=(8 * self.mid_shape_16[0], 8 * self.mid_shape_16[1]))
+            net_5 = tf.layers.conv2d(net_5, filters=128, kernel_size=5, strides=1,
+                                     padding='same', data_format='channels_last')
             net_5 = tf.nn.leaky_relu(net_5)
             net_5 = tf.layers.batch_normalization(net_5, momentum=0.8)
             net_5 = tf.layers.dropout(net_5, self.drop_rate)
@@ -294,15 +297,14 @@ class GAVAE_SIM(ModelGAVAE):
         return dense
 
     def train(self, epochs, model_file, save_interval=50, log_interval=20):
-        sorted_list = list(self.texdat.train.objectsPaths.items())
-        sorted_list.sort()
+        sorted_list = self.texdat.train.images
 
         batch_test = []
-        indices = [31]#, 100, 120, 198]
+        indices = [31, 100, 120, 198]
         for ind in indices:
-            for i in range(int(self.batch_size)):# / 4)):
+            for i in range(int(self.batch_size / 4)):
                 batch_test.append(
-                    self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
+                    self.texdat.load_image_patch(sorted_list[ind], patch_size=self.patch_size))
         batch_test = resize_batch_images(batch_test, self.patch_size)
 
         save_path = 'model/' + model_file + '/'
@@ -335,9 +337,9 @@ class GAVAE_SIM(ModelGAVAE):
 
                 batch = []
                 for ind in indices:
-                    for i in range(int(self.batch_size)):# / 4)):
+                    for i in range(int(self.batch_size / 4)):
                         batch.append(
-                            self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
+                            self.texdat.load_image_patch(sorted_list[ind], patch_size=self.patch_size))
                 batch = resize_batch_images(batch, self.patch_size)
 
                 # labels_real = np.ones(self.batch_size, np.float32) + np.subtract(np.multiply(np.random.rand(self.batch_size), 0.3), 0.15)
@@ -366,7 +368,7 @@ class GAVAE_SIM(ModelGAVAE):
                 # training the GAVAE
                 _, gavae_loss, merged = sess.run([self.vae_train_step, self.vae_loss, summary_vae], feed_dict={
                     self.vae_input : batch,
-                    self.drop_rate : 0.4
+                    self.drop_rate : 0
                 })
                 print('Gavae {:.6f}'.format(gavae_loss))
 
@@ -390,38 +392,38 @@ class GAVAE_SIM(ModelGAVAE):
 
                         ims = np.reshape(batch_test[0], (160, 160))
                         plt.imsave('./images/0/0_baseline.png', ims, cmap='gray')
-                        ims = np.reshape(batch_test[3], (160, 160))
+                        ims = np.reshape(batch_test[5], (160, 160))
                         plt.imsave('./images/1/0_baseline.png', ims, cmap='gray')
-                        ims = np.reshape(batch_test[6], (160, 160))
+                        ims = np.reshape(batch_test[10], (160, 160))
                         plt.imsave('./images/2/0_baseline.png', ims, cmap='gray')
-                        ims = np.reshape(batch_test[9], (160, 160))
+                        ims = np.reshape(batch_test[15], (160, 160))
                         plt.imsave('./images/3/0_baseline.png', ims, cmap='gray')
                     # TODO: logging
                     latent = self.z_1.eval(feed_dict={
-                        self.vae_input : batch_test
+                        self.vae_input: batch_test
                     })
-                    latent += 0.1
+                    latent += 1.3
                     generated = self.dec_output.eval(feed_dict={
-                        self.dec_input : latent
+                        self.dec_input: latent
                     })
-
                     ims = self.vae_output.eval(feed_dict={
                         self.vae_input : batch_test,
+                        self.drop_rate: 1
                     })
                     imss = np.reshape(ims[0], (160, 160))
                     plt.imsave('./images/0/' + str(epoch) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[3], (160, 160))
+                    imss = np.reshape(ims[5], (160, 160))
                     plt.imsave('./images/1/' + str(epoch) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[6], (160, 160))
+                    imss = np.reshape(ims[10], (160, 160))
                     plt.imsave('./images/2/' + str(epoch) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[9], (160, 160))
+                    imss = np.reshape(ims[15], (160, 160))
                     plt.imsave('./images/3/' + str(epoch) + '.png', imss, cmap='gray')
 
                     imss = np.reshape(generated[0], (160, 160))
                     plt.imsave('./images/0/' + str(epoch) + '_z.png', imss, cmap='gray')
-                    imss = np.reshape(generated[3], (160, 160))
+                    imss = np.reshape(generated[5], (160, 160))
                     plt.imsave('./images/1/' + str(epoch) + '_z.png', imss, cmap='gray')
-                    imss = np.reshape(generated[6], (160, 160))
+                    imss = np.reshape(generated[10], (160, 160))
                     plt.imsave('./images/2/' + str(epoch) + '_z.png', imss, cmap='gray')
-                    imss = np.reshape(generated[9], (160, 160))
+                    imss = np.reshape(generated[15], (160, 160))
                     plt.imsave('./images/3/' + str(epoch) + '_z.png', imss, cmap='gray')
