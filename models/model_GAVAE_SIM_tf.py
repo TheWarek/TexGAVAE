@@ -447,3 +447,48 @@ class GAVAE_SIM(ModelGAVAE):
                     plt.imsave('./images/2/' + str(epoch) + '_z.png', imss, cmap='gray')
                     imss = np.reshape(generated[24], (160, 160))
                     plt.imsave('./images/3/' + str(epoch) + '_z.png', imss, cmap='gray')
+
+    def test(self, model_file):
+        sorted_list = self.texdat.train.images
+
+        restore_path = 'model/' + model_file + '/'
+        saver = tf.train.Saver(max_to_keep=5)
+        if not os.path.exists(restore_path):
+            print("Unable to find restore path, ending test")
+            return
+        model_ckpt = os.path.join(restore_path, 'checkpoint')
+
+        with tf.Session() as sess:
+            if os.path.exists(model_ckpt):
+                # restore checkpoint if it exists
+                try:
+                    print("Trying to restore last checkpoint ...")
+                    last_chk_path = tf.train.latest_checkpoint(checkpoint_dir=restore_path)
+                    saver.restore(sess, save_path=last_chk_path)
+                    print("Restored checkpoint from:", last_chk_path)
+                except:
+                    print("Failed to restore model checkpoint. Ending test.")
+                    return
+            else:
+                print("Failed to restore model. Ending test")
+                return
+            if not os.path.exists('./test-images/'):
+                os.makedirs('./test-images/')
+
+            for j in range(int(len(sorted_list) / 32)):
+                batch = []
+                for i in range(j * 32, j * 32 + 32):
+                    batch.append(self.texdat.load_image_patch(sorted_list[i], patch_size=self.patch_size))
+                batch = resize_batch_images(batch, self.patch_size)
+
+                ims = self.vae_output.eval(feed_dict={
+                    self.vae_input: batch,
+                    self.drop_rate: 0
+                })
+                c = 0
+                for i in range(j * 32, j * 32 + 32):
+                    batchs = np.reshape(batch[c], (160,160))
+                    plt.imsave('./test-images/' + str(i) + '_o.png', batchs, cmap='gray')
+                    imss = np.reshape(ims[c],(160,160))
+                    plt.imsave('./test-images/' + str(i) + '.png', imss, cmap='gray')
+                    c = (c+1) % 32
