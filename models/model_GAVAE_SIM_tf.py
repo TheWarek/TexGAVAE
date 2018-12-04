@@ -21,7 +21,7 @@ class GAVAE_SIM(ModelGAVAE):
 
         self.m = batch_size
         self.margin = margin
-        self.n_z = 1000
+        self.n_z = 400
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
         # self.disc_gt = tf.placeholder(tf.float32, [None, ], name="disc_gt")
@@ -69,16 +69,16 @@ class GAVAE_SIM(ModelGAVAE):
         # compute the average MSE error, then scale it up, ie. simply sum on all axes
         # mse_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
         with tf.variable_scope('vae_loss'):
-            reconstruction_loss = tf.reduce_sum(tf.div(tf.abs(self.vae_input - self.vae_output), (tf.abs(self.vae_input) + tf.abs(self.vae_output))))
-            self.vae_summaries.append(tf.summary.scalar('recon_loss',tf.reduce_mean(reconstruction_loss)))
+            reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(self.vae_input - self.vae_output)))
+            self.vae_summaries.append(tf.summary.scalar('recon_loss', reconstruction_loss))
             # compute the KL loss
             kl_loss = - 0.5 * tf.reduce_mean(1 + self.log_sigma_1 - tf.square(self.mu_1) - tf.square(tf.exp(self.log_sigma_1)), axis=-1)
             self.vae_summaries.append(tf.summary.scalar('kl_loss', tf.reduce_mean(kl_loss)))
             # compute encoder loss
-            encoder_loss = tf.reduce_mean(tf.square(self.z_1 - self.z_2))
+            encoder_loss = tf.sqrt(tf.reduce_sum(tf.square(self.z_1 - self.z_2)))
             self.vae_summaries.append(tf.summary.scalar('encoder_loss', encoder_loss))
             # return the average loss over all images in batch
-            total_loss = tf.reduce_mean(reconstruction_loss + kl_loss + encoder_loss)
+            total_loss = tf.reduce_mean(reconstruction_loss + kl_loss)
 
             self.vae_summaries.append(tf.summary.scalar('total_loss', total_loss))
         return total_loss
@@ -299,13 +299,13 @@ class GAVAE_SIM(ModelGAVAE):
     def train(self, epochs, model_file, save_interval=50, log_interval=20):
         sorted_list = self.texdat.train.images
 
-        batch_test = []
-        indices = [31, 100, 120, 198]
-        for ind in indices:
-            for i in range(int(self.batch_size / 4)):
-                batch_test.append(
-                    self.texdat.load_image_patch(sorted_list[ind], patch_size=self.patch_size))
-        batch_test = resize_batch_images(batch_test, self.patch_size)
+        # batch_test = []
+        # indices = [31, 100, 120, 198]
+        # for ind in indices:
+        #     for i in range(int(self.batch_size / 4)):
+        #         batch_test.append(
+        #             self.texdat.load_image_patch(sorted_list[ind], patch_size=self.patch_size))
+        # batch_test = resize_batch_images(batch_test, self.patch_size)
 
         save_path = 'model/' + model_file + '/'
         saver = tf.train.Saver(max_to_keep=5)
@@ -332,10 +332,12 @@ class GAVAE_SIM(ModelGAVAE):
             # summary_disc_1 = tf.summary.merge(self.disc_summaries)
             summary_vae = tf.summary.merge(self.vae_summaries)
 
+            early_stop_counter = 0
             for epoch in range(epochs):
                 print('Epoch {:d}'.format(epoch))
 
                 batch = []
+                indices = np.random.choice(np.arange(len(sorted_list)), size=4, replace=False)
                 for ind in indices:
                     for i in range(int(self.batch_size / 4)):
                         batch.append(
@@ -372,6 +374,24 @@ class GAVAE_SIM(ModelGAVAE):
                 })
                 print('Gavae {:.6f}'.format(gavae_loss))
 
+                # regularization for early stopping
+                if gavae_loss > 1000:
+                    if early_stop_counter > 5:
+                        print("Stopping the training due to high loss.")
+                        print("Unable to change gradient for the 5th time")
+                        break
+                    early_stop_counter += 1
+                    try:
+                        print(["VAE loss to high", "Trying to restore last checkpoint ..."], sep='\n')
+                        last_chk_path = tf.train.latest_checkpoint(checkpoint_dir=save_path)
+                        idx = last_chk_path.rfind('-')
+                        restore_point = last_chk_path[:idx+1] + str(int(last_chk_path[idx+1:])-200)
+                        saver.restore(sess, save_path=restore_point)
+                        print("Restored checkpoint from:", restore_point)
+                    except:
+                        print("Stopping the training due to high loss.")
+                        break
+
 # log + test for results
                 if epoch % save_interval == 0:
                     save_path_local = saver.save(sess=sess, save_path=model_ckpt, global_step=epoch)
@@ -390,40 +410,40 @@ class GAVAE_SIM(ModelGAVAE):
                         if not os.path.exists('./images/3'):
                             os.makedirs('./images/3')
 
-                        ims = np.reshape(batch_test[0], (160, 160))
-                        plt.imsave('./images/0/0_baseline.png', ims, cmap='gray')
-                        ims = np.reshape(batch_test[5], (160, 160))
-                        plt.imsave('./images/1/0_baseline.png', ims, cmap='gray')
-                        ims = np.reshape(batch_test[10], (160, 160))
-                        plt.imsave('./images/2/0_baseline.png', ims, cmap='gray')
-                        ims = np.reshape(batch_test[15], (160, 160))
-                        plt.imsave('./images/3/0_baseline.png', ims, cmap='gray')
+                    ims = np.reshape(batch[0], (160, 160))
+                    plt.imsave('./images/0/'+str(epoch)+'_0_baseline.png', ims, cmap='gray')
+                    ims = np.reshape(batch[8], (160, 160))
+                    plt.imsave('./images/1/'+str(epoch)+'_8_baseline_'+str(epoch)+'.png', ims, cmap='gray')
+                    ims = np.reshape(batch[16], (160, 160))
+                    plt.imsave('./images/2/'+str(epoch)+'_16_baseline_'+str(epoch)+'.png', ims, cmap='gray')
+                    ims = np.reshape(batch[24], (160, 160))
+                    plt.imsave('./images/3/'+str(epoch)+'_24_baseline_'+str(epoch)+'.png', ims, cmap='gray')
                     # TODO: logging
                     latent = self.z_1.eval(feed_dict={
-                        self.vae_input: batch_test
+                        self.vae_input: batch
                     })
                     latent += 1.3
                     generated = self.dec_output.eval(feed_dict={
                         self.dec_input: latent
                     })
                     ims = self.vae_output.eval(feed_dict={
-                        self.vae_input : batch_test,
+                        self.vae_input : batch,
                         self.drop_rate: 1
                     })
                     imss = np.reshape(ims[0], (160, 160))
                     plt.imsave('./images/0/' + str(epoch) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[5], (160, 160))
+                    imss = np.reshape(ims[8], (160, 160))
                     plt.imsave('./images/1/' + str(epoch) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[10], (160, 160))
+                    imss = np.reshape(ims[16], (160, 160))
                     plt.imsave('./images/2/' + str(epoch) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[15], (160, 160))
+                    imss = np.reshape(ims[24], (160, 160))
                     plt.imsave('./images/3/' + str(epoch) + '.png', imss, cmap='gray')
 
                     imss = np.reshape(generated[0], (160, 160))
                     plt.imsave('./images/0/' + str(epoch) + '_z.png', imss, cmap='gray')
-                    imss = np.reshape(generated[5], (160, 160))
+                    imss = np.reshape(generated[8], (160, 160))
                     plt.imsave('./images/1/' + str(epoch) + '_z.png', imss, cmap='gray')
-                    imss = np.reshape(generated[10], (160, 160))
+                    imss = np.reshape(generated[16], (160, 160))
                     plt.imsave('./images/2/' + str(epoch) + '_z.png', imss, cmap='gray')
-                    imss = np.reshape(generated[15], (160, 160))
+                    imss = np.reshape(generated[24], (160, 160))
                     plt.imsave('./images/3/' + str(epoch) + '_z.png', imss, cmap='gray')
