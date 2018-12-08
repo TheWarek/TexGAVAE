@@ -45,7 +45,7 @@ class GAVAE_SIM(ModelGAVAE):
         #     scope.reuse_variables()
         #     self.gavae = self.get_discriminator(self.vae_output, False)
 
-        # self.genloss = self.gen_loss(self.disc_gt, self.gavae)
+        # self.gen_loss = self.gen_loss(self.disc_gt, self.gavae)
         # self.disc_loss = self.disc_loss(self.disc_gt, self.discriminator)
 
         self.vae_loss = self.__vae_loss()
@@ -58,11 +58,11 @@ class GAVAE_SIM(ModelGAVAE):
                 loss=self.vae_loss,
                 global_step=self.vae_global_step
             )
-            # self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
-            # self.disc_train_step = self.disc_optimizer.minimize(
-            #     loss=self.disc_loss,
-            #     global_step=self.disc_global_step
-            # )
+            self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
+            self.disc_train_step = self.disc_optimizer.minimize(
+                loss=self.disc_loss,
+                global_step=self.disc_global_step
+            )
 
 
     def __vae_loss(self):
@@ -78,6 +78,7 @@ class GAVAE_SIM(ModelGAVAE):
             encoder_loss = tf.sqrt(tf.reduce_sum(tf.square(self.z_1 - self.z_2)))
             self.vae_summaries.append(tf.summary.scalar('encoder_loss', encoder_loss))
             # return the average loss over all images in batch
+            # kokot neotacaj ho, nechaj +, lebo uz je vynasobeny -1 on sam
             total_loss = tf.reduce_mean(reconstruction_loss + kl_loss)
 
             self.vae_summaries.append(tf.summary.scalar('total_loss', total_loss))
@@ -87,16 +88,16 @@ class GAVAE_SIM(ModelGAVAE):
         # encoder loss
         with tf.variable_scope('generator_loss'):
             z_2 = self.sample_z([self.mu_2, self.log_sigma_2])
-            with tf.variable_scope('margin_loss'):
-                self.margin_loss = tf.reduce_mean(tf.minimum(0., tf.sqrt(tf.reduce_sum(tf.square(z_2 - self.z_1),axis=1)) - self.margin)) # better name for margin loss
-                self.vae_summaries.append(tf.summary.scalar('margin_loss', self.margin_loss))
+            # with tf.variable_scope('margin_loss'):
+            #     self.margin_loss = tf.reduce_mean(tf.minimum(0., tf.sqrt(tf.reduce_sum(tf.square(z_2 - self.z_1),axis=1)) - self.margin)) # better name for margin loss
+            #     self.vae_summaries.append(tf.summary.scalar('margin_loss', self.margin_loss))
             with tf.variable_scope('meansquare_loss'):
                 # compute the binary crossentropy
                 # trueseems_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
                 self.meansquare_loss = tf.reduce_mean(tf.square(y_pred - y_true))
                 self.vae_summaries.append(tf.summary.scalar('true_loss', self.meansquare_loss))
             with tf.variable_scope('reconstruction_loss'):
-                reconstruction_loss = -tf.reduce_sum(self.vae_input * tf.log(tf.constant(1e-5, tf.float32) + self.vae_output) + (1-self.vae_input) * tf.log(tf.constant(1e-5 + 1,tf.float32) - self.vae_output), 1)
+                reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(self.vae_input - self.vae_output)))
                 self.reconstruction_loss = tf.reduce_mean(reconstruction_loss) / (self.patch_size[0]*self.patch_size[1])
                 self.vae_summaries.append(tf.summary.scalar('reconstruction_loss', self.reconstruction_loss))
             with tf.variable_scope('kl_divergence_loss'):
@@ -105,7 +106,7 @@ class GAVAE_SIM(ModelGAVAE):
                 # self.vae_summaries.append(tf.summary.scalar('kl_loss', self.kl_loss))
             with tf.variable_scope('total_mean_loss'):
                 # return the average loss over all images in batch
-                total_loss = tf.reduce_mean(self.meansquare_loss) #+ 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
+                total_loss = tf.reduce_mean(self.reconstruction_loss + self.kl_loss) #+ 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
                 self.vae_summaries.append(tf.summary.scalar('total_loss', total_loss))
         return total_loss
 
@@ -196,30 +197,30 @@ class GAVAE_SIM(ModelGAVAE):
         with tf.variable_scope('layer_1'):
             net_1 = tf.layers.dense(input, self.mid_shape[0] * self.mid_shape[1], reuse=tf.AUTO_REUSE)
             net_1 = tf.nn.leaky_relu(net_1)
-            net_1 = tf.layers.batch_normalization(net_1, momentum=0.8)
+            net_1 = tf.layers.batch_normalization(net_1, momentum=0.8,reuse=tf.AUTO_REUSE)
 
         reshape = tf.reshape(net_1, (self.m, self.mid_shape[0], self.mid_shape[1], self.mid_shape[2]))
 
         with tf.variable_scope('layer_2'):
             net_2 = tf.layers.conv2d(reshape, filters=16, kernel_size=5, strides=1,
-                                     padding='same', data_format='channels_last')
+                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
             net_2 = tf.nn.leaky_relu(net_2)
-            net_2 = tf.layers.batch_normalization(net_2, momentum=0.8)
+            net_2 = tf.layers.batch_normalization(net_2, momentum=0.8, reuse=tf.AUTO_REUSE)
             net_2 = tf.layers.dropout(net_2, self.drop_rate)
 
         with tf.variable_scope('layer_3'):
             net_3 = tf.image.resize_images(net_2, size=(2 * self.mid_shape_16[0], 2 * self.mid_shape_16[1]))
             net_3 = tf.layers.conv2d(net_3, filters=32, kernel_size=5, strides=1,
-                                     padding='same', data_format='channels_last')
+                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
             net_3 = tf.nn.leaky_relu(net_3)
-            net_3 = tf.layers.batch_normalization(net_3, momentum=0.8)
+            net_3 = tf.layers.batch_normalization(net_3, momentum=0.8, reuse=tf.AUTO_REUSE)
             net_3 = tf.layers.dropout(net_3, self.drop_rate)
 
         with tf.variable_scope('layer_4'):
 
             net_4 = tf.image.resize_images(net_3, size=(4 * self.mid_shape_16[0], 4 * self.mid_shape_16[1]))
             net_4 = tf.layers.conv2d(net_4, filters=64, kernel_size=5, strides=1,
-                                     padding='same', data_format='channels_last')
+                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
             net_4 = tf.nn.leaky_relu(net_4)
             net_4 = tf.layers.batch_normalization(net_4, momentum=0.8)
             net_4 = tf.layers.dropout(net_4, self.drop_rate)
@@ -227,9 +228,9 @@ class GAVAE_SIM(ModelGAVAE):
         with tf.variable_scope('layer_5'):
             net_5 = tf.image.resize_images(net_4, size=(8 * self.mid_shape_16[0], 8 * self.mid_shape_16[1]))
             net_5 = tf.layers.conv2d(net_5, filters=128, kernel_size=5, strides=1,
-                                     padding='same', data_format='channels_last')
+                                     padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
             net_5 = tf.nn.leaky_relu(net_5)
-            net_5 = tf.layers.batch_normalization(net_5, momentum=0.8)
+            net_5 = tf.layers.batch_normalization(net_5, momentum=0.8, reuse=tf.AUTO_REUSE)
             net_5 = tf.layers.dropout(net_5, self.drop_rate)
 
         with tf.variable_scope('layer_6'):
@@ -335,7 +336,6 @@ class GAVAE_SIM(ModelGAVAE):
             early_stop_counter = 0
             for epoch in range(epochs):
                 print('Epoch {:d}'.format(epoch))
-
                 batch = []
                 indices = np.random.choice(np.arange(len(sorted_list)), size=4, replace=False)
                 for ind in indices:
@@ -375,7 +375,7 @@ class GAVAE_SIM(ModelGAVAE):
                 print('Gavae {:.6f}'.format(gavae_loss))
 
                 # regularization for early stopping
-                if gavae_loss > 1000:
+                if gavae_loss > 1000 or gavae_loss < -1000:
                     if early_stop_counter > 5:
                         print("Stopping the training due to high loss.")
                         print("Unable to change gradient for the 5th time")
@@ -413,11 +413,11 @@ class GAVAE_SIM(ModelGAVAE):
                     ims = np.reshape(batch[0], (160, 160))
                     plt.imsave('./images/0/'+str(epoch)+'_0_baseline.png', ims, cmap='gray')
                     ims = np.reshape(batch[8], (160, 160))
-                    plt.imsave('./images/1/'+str(epoch)+'_8_baseline_'+str(epoch)+'.png', ims, cmap='gray')
+                    plt.imsave('./images/1/'+str(epoch)+'_8_baseline.png', ims, cmap='gray')
                     ims = np.reshape(batch[16], (160, 160))
-                    plt.imsave('./images/2/'+str(epoch)+'_16_baseline_'+str(epoch)+'.png', ims, cmap='gray')
+                    plt.imsave('./images/2/'+str(epoch)+'_16_baseline.png', ims, cmap='gray')
                     ims = np.reshape(batch[24], (160, 160))
-                    plt.imsave('./images/3/'+str(epoch)+'_24_baseline_'+str(epoch)+'.png', ims, cmap='gray')
+                    plt.imsave('./images/3/'+str(epoch)+'_24_baseline.png', ims, cmap='gray')
                     # TODO: logging
                     latent = self.z_1.eval(feed_dict={
                         self.vae_input: batch
@@ -475,20 +475,41 @@ class GAVAE_SIM(ModelGAVAE):
             if not os.path.exists('./test-images/'):
                 os.makedirs('./test-images/')
 
-            for j in range(int(len(sorted_list) / 32)):
-                batch = []
-                for i in range(j * 32, j * 32 + 32):
-                    batch.append(self.texdat.load_image_patch(sorted_list[i], patch_size=self.patch_size))
-                batch = resize_batch_images(batch, self.patch_size)
 
-                ims = self.vae_output.eval(feed_dict={
-                    self.vae_input: batch,
+            for j in range(int(len(sorted_list) / 32)):
+                batch_1 = []
+                for i in range(j * 32, j * 32 + 32):
+                    batch_1.append(self.texdat.load_image_patch(sorted_list[i], patch_size=self.patch_size))
+                batch_1 = resize_batch_images(batch_1, self.patch_size)
+
+                batch_2 = []
+                for i in range(j * 32, j * 32 + 32):
+                    batch_2.append(self.texdat.load_image_patch(sorted_list[i], patch_size=self.patch_size))
+                batch_2 = resize_batch_images(batch_2, self.patch_size)
+
+                latent_1 = self.z_1.eval(feed_dict={
+                    self.vae_input: batch_1,
                     self.drop_rate: 0
                 })
-                c = 0
-                for i in range(j * 32, j * 32 + 32):
-                    batchs = np.reshape(batch[c], (160,160))
-                    plt.imsave('./test-images/' + str(i) + '_o.png', batchs, cmap='gray')
-                    imss = np.reshape(ims[c],(160,160))
-                    plt.imsave('./test-images/' + str(i) + '.png', imss, cmap='gray')
-                    c = (c+1) % 32
+
+                latent_2 = self.z_1.eval(feed_dict={
+                    self.vae_input: batch_2,
+                    self.drop_rate: 0
+                })
+                B = (latent_2 - latent_1) / 6
+                for t in range(7):
+                    latent = latent_1+B*t
+
+                    ims = self.dec_output.eval(feed_dict={
+                        self.dec_input: latent,
+                        self.drop_rate: 0
+                    })
+                    c = 0
+                    for i in range(j * 32, j * 32 + 32):
+                        batchs = np.reshape(batch_1[c], (160, 160))
+                        plt.imsave('./test-images/index_' + str(i) + '_o_1.png', batchs, cmap='gray')
+                        batchs = np.reshape(batch_2[c], (160, 160))
+                        plt.imsave('./test-images/index_' + str(i) + '_o_2.png', batchs, cmap='gray')
+                        imss = np.reshape(ims[c],(160,160))
+                        plt.imsave('./test-images/index_' + str(i) + '_t_' + str(t) + '.png', imss, cmap='gray')
+                        c = (c+1) % 32

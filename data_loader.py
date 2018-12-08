@@ -105,7 +105,7 @@ class TexDAT:
         return np.array(patch).astype(np.float32)
 
     @staticmethod
-    def load_image_patch(image:np.ndarray, patch_size:tuple=(160,160)):
+    def load_image_patch(image:np.ndarray, patch_size:tuple=(160,160)) -> np.ndarray:
         h = image.shape[0]
         w = image.shape[1]
         row = random.randint(0, h - patch_size[0])
