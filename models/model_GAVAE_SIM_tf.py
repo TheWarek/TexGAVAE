@@ -19,20 +19,25 @@ class GAVAE_SIM(ModelGAVAE):
         self.texdat = TexDAT(data_path, self.batch_size)
         self.texdat.load_images(False)
 
+        self.repeater = 2
+        self.dataset = tf.data.Dataset.from_generator(self.dataset_generator,output_types=tf.float32, output_shapes=([None,w,h,c]))
+        self.dataset_iterator = self.dataset.make_initializable_iterator()
+        self.dataset_batch = self.dataset_iterator.get_next()
+
         self.m = batch_size
         self.margin = margin
         self.n_z = 400
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
         # self.disc_gt = tf.placeholder(tf.float32, [None, ], name="disc_gt")
-        self.vae_input = tf.placeholder(dtype=tf.float32, shape=[None, w, h, c], name="vae_input")
+        # self.vae_input = tf.placeholder(dtype=tf.float32, shape=[None, w, h, c], name="vae_input")
         self.dec_input = tf.placeholder(dtype=tf.float32, shape=[None, self.n_z], name="dec_input")
 
         self.disc_summaries = []
         self.vae_summaries = []
 
         with tf.variable_scope('encoders') as scope:
-            self.mu_1, self.log_sigma_1, self.z_1 = self.get_vae_encoder_part(self.vae_input, True)  # encoder at the beginning
+            self.mu_1, self.log_sigma_1, self.z_1 = self.get_vae_encoder_part(self.dataset_batch, True)  # encoder at the beginning
             with tf.variable_scope('decoder') as dec_scope:
                 self.vae_output = self.get_vae_decoder_part(self.z_1)
                 dec_scope.reuse_variables()
@@ -48,7 +53,7 @@ class GAVAE_SIM(ModelGAVAE):
         # self.gen_loss = self.gen_loss(self.disc_gt, self.gavae)
         # self.disc_loss = self.disc_loss(self.disc_gt, self.discriminator)
 
-        self.vae_loss = self.__vae_loss()
+        self.vae_loss = self.__vae_loss(self.dataset_batch)
 
         with tf.variable_scope('optimizers'):
             # self.disc_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.9)
@@ -58,18 +63,18 @@ class GAVAE_SIM(ModelGAVAE):
                 loss=self.vae_loss,
                 global_step=self.vae_global_step
             )
-            self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
-            self.disc_train_step = self.disc_optimizer.minimize(
-                loss=self.disc_loss,
-                global_step=self.disc_global_step
-            )
+            # self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
+            # self.disc_train_step = self.disc_optimizer.minimize(
+            #     loss=self.disc_loss,
+            #     global_step=self.disc_global_step
+            # )
 
 
-    def __vae_loss(self):
+    def __vae_loss(self, vae_input):
         # compute the average MSE error, then scale it up, ie. simply sum on all axes
         # mse_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
         with tf.variable_scope('vae_loss'):
-            reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(self.vae_input - self.vae_output)))
+            reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(vae_input - self.vae_output)))
             self.vae_summaries.append(tf.summary.scalar('recon_loss', reconstruction_loss))
             # compute the KL loss
             kl_loss = - 0.5 * tf.reduce_mean(1 + self.log_sigma_1 - tf.square(self.mu_1) - tf.square(tf.exp(self.log_sigma_1)), axis=-1)
@@ -297,8 +302,21 @@ class GAVAE_SIM(ModelGAVAE):
 
         return dense
 
-    def train(self, epochs, model_file, save_interval=50, log_interval=20):
+    def dataset_generator(self):
         sorted_list = self.texdat.train.images
+        while True:
+            batch = []
+            indices = np.random.choice(np.arange(len(sorted_list)), size=4, replace=False)
+            for ind in indices:
+                for i in range(int(self.batch_size / 4)):
+                    batch.append(
+                        self.texdat.load_image_patch(sorted_list[ind], patch_size=self.patch_size))
+            batch = resize_batch_images(batch, self.patch_size)
+            for i in range(self.repeater):
+                yield batch
+
+    def train(self, epochs, model_file, save_interval=50, log_interval=20):
+        # sorted_list = self.texdat.train.images
 
         # batch_test = []
         # indices = [31, 100, 120, 198]
@@ -333,16 +351,11 @@ class GAVAE_SIM(ModelGAVAE):
             # summary_disc_1 = tf.summary.merge(self.disc_summaries)
             summary_vae = tf.summary.merge(self.vae_summaries)
 
+            sess.run(self.dataset_iterator.initializer)
+
             early_stop_counter = 0
             for epoch in range(epochs):
                 print('Epoch {:d}'.format(epoch))
-                batch = []
-                indices = np.random.choice(np.arange(len(sorted_list)), size=4, replace=False)
-                for ind in indices:
-                    for i in range(int(self.batch_size / 4)):
-                        batch.append(
-                            self.texdat.load_image_patch(sorted_list[ind], patch_size=self.patch_size))
-                batch = resize_batch_images(batch, self.patch_size)
 
                 # labels_real = np.ones(self.batch_size, np.float32) + np.subtract(np.multiply(np.random.rand(self.batch_size), 0.3), 0.15)
                 # labels_fake = np.zeros(self.batch_size, np.float32) + np.multiply(np.random.rand(self.batch_size), 0.3)
@@ -368,10 +381,9 @@ class GAVAE_SIM(ModelGAVAE):
                 #                 print('Disc. on fake {:.6f}'.format(discriminant_loss))
 
                 # training the GAVAE
-                _, gavae_loss, merged = sess.run([self.vae_train_step, self.vae_loss, summary_vae], feed_dict={
-                    self.vae_input : batch,
-                    self.drop_rate : 0
-                })
+                if epoch % log_interval == 0:
+                    self.repeater = 5
+                _, gavae_loss, merged = sess.run([self.vae_train_step, self.vae_loss, summary_vae])
                 print('Gavae {:.6f}'.format(gavae_loss))
 
                 # regularization for early stopping
@@ -410,6 +422,7 @@ class GAVAE_SIM(ModelGAVAE):
                         if not os.path.exists('./images/3'):
                             os.makedirs('./images/3')
 
+                    batch = sess.run(self.dataset_batch)
                     ims = np.reshape(batch[0], (160, 160))
                     plt.imsave('./images/0/'+str(epoch)+'_0_baseline.png', ims, cmap='gray')
                     ims = np.reshape(batch[8], (160, 160))
@@ -419,17 +432,14 @@ class GAVAE_SIM(ModelGAVAE):
                     ims = np.reshape(batch[24], (160, 160))
                     plt.imsave('./images/3/'+str(epoch)+'_24_baseline.png', ims, cmap='gray')
                     # TODO: logging
-                    latent = self.z_1.eval(feed_dict={
-                        self.vae_input: batch
-                    })
+                    latent = self.z_1.eval()
                     latent += 1.3
                     generated = self.dec_output.eval(feed_dict={
                         self.dec_input: latent
                     })
-                    ims = self.vae_output.eval(feed_dict={
-                        self.vae_input : batch,
-                        self.drop_rate: 1
-                    })
+
+                    ims = self.vae_output.eval()
+
                     imss = np.reshape(ims[0], (160, 160))
                     plt.imsave('./images/0/' + str(epoch) + '.png', imss, cmap='gray')
                     imss = np.reshape(ims[8], (160, 160))
@@ -448,14 +458,16 @@ class GAVAE_SIM(ModelGAVAE):
                     imss = np.reshape(generated[24], (160, 160))
                     plt.imsave('./images/3/' + str(epoch) + '_z.png', imss, cmap='gray')
 
+                    self.repeater = 2
+
     def test(self, model_file):
         sorted_list = self.texdat.train.images
 
         restore_path = 'model/' + model_file + '/'
         saver = tf.train.Saver(max_to_keep=5)
-        if not os.path.exists(restore_path):
-            print("Unable to find restore path, ending test")
-            return
+        # if not os.path.exists(restore_path):
+        #     print("Unable to find restore path, ending test")
+        #     return
         model_ckpt = os.path.join(restore_path, 'checkpoint')
 
         with tf.Session() as sess:
