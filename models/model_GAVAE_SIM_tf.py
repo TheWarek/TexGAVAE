@@ -1,3 +1,5 @@
+from tensorflow.contrib.seq2seq.python.ops import loss
+
 from .model import ModelGAVAE
 import tensorflow as tf
 
@@ -29,8 +31,9 @@ class GAVAE_SIM(ModelGAVAE):
         self.n_z = 400
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
-        # self.disc_gt = tf.placeholder(tf.float32, [None, ], name="disc_gt")
-        # self.vae_input = tf.placeholder(dtype=tf.float32, shape=[None, w, h, c], name="vae_input")
+        self.disc_gt = tf.placeholder(tf.float32, [None, 1], name="disc_gt")
+        self.disc_input = tf.placeholder(dtype=tf.float32, shape=[None, w, h, c], name="disc_input")
+
         self.dec_input = tf.placeholder(dtype=tf.float32, shape=[None, self.n_z], name="dec_input")
 
         self.disc_summaries = []
@@ -45,30 +48,38 @@ class GAVAE_SIM(ModelGAVAE):
             scope.reuse_variables()
             self.mu_2, self.log_sigma_2, self.z_2 = self.get_vae_encoder_part(self.vae_output, False)
 
-        # with tf.variable_scope('discriminator') as scope:
-        #     self.discriminator = self.get_discriminator(self.vae_input, True)
-        #     scope.reuse_variables()
-        #     self.gavae = self.get_discriminator(self.vae_output, False)
+        self.variables_to_restore = tf.all_variables()
 
-        # self.gen_loss = self.gen_loss(self.disc_gt, self.gavae)
-        # self.disc_loss = self.disc_loss(self.disc_gt, self.discriminator)
+        with tf.variable_scope('discriminator') as scope:
+            self.discriminator_original = self.get_discriminator(self.disc_input, True)
+            scope.reuse_variables()
+            self.gavae = self.get_discriminator(self.vae_output, False)
 
-        self.vae_loss = self.__vae_loss(self.dataset_batch)
+
+        self.gen_loss = self.__gen_loss(self.disc_gt, self.gavae)
+        self.disc_loss = self.__disc_loss(self.disc_gt, self.discriminator_original)
+
+        # self.vae_loss = self.__vae_loss(self.dataset_batch)
 
         with tf.variable_scope('optimizers'):
-            # self.disc_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.9)
-            self.vae_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
-            self.vae_global_step = tf.Variable(initial_value=0, name='vae_global_step', trainable=False)
-            self.vae_train_step = self.vae_optimizer.minimize(
-                loss=self.vae_loss,
-                global_step=self.vae_global_step
-            )
-            # self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
-            # self.disc_train_step = self.disc_optimizer.minimize(
-            #     loss=self.disc_loss,
-            #     global_step=self.disc_global_step
+            self.disc_optimizer = tf.train.GradientDescentOptimizer(learning_rate=lr)
+            self.gen_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
+            # self.vae_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
+            # self.vae_global_step = tf.Variable(initial_value=0, name='vae_global_step', trainable=False)
+            # self.vae_train_step = self.vae_optimizer.minimize(
+            #     loss=self.vae_loss,
+            #     global_step=self.vae_global_step
             # )
-
+            self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
+            self.disc_train_step = self.disc_optimizer.minimize(
+                loss=self.disc_loss,
+                global_step=self.disc_global_step
+            )
+            self.gen_global_step = tf.Variable(initial_value=0, name='gen_global_step', trainable=False)
+            self.gen_train_step = self.gen_optimizer.minimize(
+                loss=self.gen_loss,
+                global_step=self.gen_global_step
+            )
 
     def __vae_loss(self, vae_input):
         # compute the average MSE error, then scale it up, ie. simply sum on all axes
@@ -92,35 +103,26 @@ class GAVAE_SIM(ModelGAVAE):
     def __gen_loss(self, y_true, y_pred):
         # encoder loss
         with tf.variable_scope('generator_loss'):
-            z_2 = self.sample_z([self.mu_2, self.log_sigma_2])
-            # with tf.variable_scope('margin_loss'):
-            #     self.margin_loss = tf.reduce_mean(tf.minimum(0., tf.sqrt(tf.reduce_sum(tf.square(z_2 - self.z_1),axis=1)) - self.margin)) # better name for margin loss
-            #     self.vae_summaries.append(tf.summary.scalar('margin_loss', self.margin_loss))
             with tf.variable_scope('meansquare_loss'):
-                # compute the binary crossentropy
-                # trueseems_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
-                self.meansquare_loss = tf.reduce_mean(tf.square(y_pred - y_true))
-                self.vae_summaries.append(tf.summary.scalar('true_loss', self.meansquare_loss))
-            with tf.variable_scope('reconstruction_loss'):
-                reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(self.vae_input - self.vae_output)))
-                self.reconstruction_loss = tf.reduce_mean(reconstruction_loss) / (self.patch_size[0]*self.patch_size[1])
-                self.vae_summaries.append(tf.summary.scalar('reconstruction_loss', self.reconstruction_loss))
+                # meansquare_loss = tf.reduce_mean(tf.square(y_pred - y_true))
+                cross_entropy = y_pred - y_pred * y_true + tf.log(1 + tf.exp(-y_pred))
+                self.vae_summaries.append(tf.summary.scalar('entropy_loss', cross_entropy))
             with tf.variable_scope('kl_divergence_loss'):
                 # compute the KL loss - reduce_sum
                 self.kl_loss = - 0.5 * tf.reduce_mean(1 + self.log_sigma_1 - tf.square(self.mu_1) - tf.square(tf.exp(self.log_sigma_1)), axis=-1)
-                # self.vae_summaries.append(tf.summary.scalar('kl_loss', self.kl_loss))
+                self.vae_summaries.append(tf.summary.scalar('kl_loss', self.kl_loss))
             with tf.variable_scope('total_mean_loss'):
                 # return the average loss over all images in batch
-                total_loss = tf.reduce_mean(self.reconstruction_loss + self.kl_loss) #+ 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
+                total_loss = tf.reduce_mean(cross_entropy + self.kl_loss) #+ 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
                 self.vae_summaries.append(tf.summary.scalar('total_loss', total_loss))
         return total_loss
 
     def __disc_loss(self, y_true, y_pred):
         with tf.variable_scope('discriminant_loss'):
-            # reconstruction_loss = K.mean(K.binary_crossentropy(y_true, y_pred), axis=-1)
-            reconstruction_loss = tf.reduce_mean(tf.square(y_pred - y_true))
-            self.disc_summaries.append(tf.summary.scalar('discriminator_loss',reconstruction_loss))
-        return reconstruction_loss
+            # meansquare_loss = tf.reduce_mean(tf.square(y_pred - y_true))
+            cross_entropy = tf.reduce_mean(y_pred - y_pred * y_true + tf.log(1 + tf.exp(-y_pred)))
+            self.disc_summaries.append(tf.summary.scalar('discriminator_loss', cross_entropy))
+        return cross_entropy
 
     def sample_z(self, args) -> tf.Tensor:
         with tf.variable_scope('sampling_z'):
@@ -315,6 +317,109 @@ class GAVAE_SIM(ModelGAVAE):
             for i in range(self.repeater):
                 yield batch
 
+    def transfer_train(self, epochs, model_file, save_interval=50, log_interval=20):
+        restorer = tf.train.Saver(var_list=self.variables_to_restore)
+        restore_path = 'model/' + model_file + '/'
+        saver = tf.train.Saver(max_to_keep=5)
+        save_path_gan = 'model/' + model_file + '_gan/'
+        gen_model_ckpt = os.path.join(save_path_gan, 'checkpoint')
+        vae_model_ckpt = os.path.join(restore_path, 'checkpoint')
+        with tf.Session() as sess:
+
+            if os.path.exists(save_path_gan):
+                try:
+                    print("Trying to restore GAVAE checkpoint ...")
+                    last_gan_chk_path = tf.train.latest_checkpoint(checkpoint_dir=save_path_gan)
+                    saver.restore(sess, save_path=last_gan_chk_path)
+                    print("Restored GAN from:", last_gan_chk_path)
+                except:
+                    print("Failed to restore GAN weights. Reinitializing from VAE.")
+                    sess.run(tf.global_variables_initializer())
+            else:
+                os.makedirs(save_path_gan)
+                sess.run(tf.global_variables_initializer())
+
+            if os.path.exists(vae_model_ckpt):
+                # restore checkpoint if it exists
+                try:
+                    print("Trying to restore VAE checkpoint ...")
+                    last_vae_chk_path = tf.train.latest_checkpoint(checkpoint_dir=restore_path)
+                    restorer.restore(sess, save_path=last_vae_chk_path)
+                    print("Restored VAE weights from:", last_vae_chk_path)
+                except:
+                    print("Failed to restore VAE weights. Error")
+                    return 0xfff
+
+            sess.run(self.dataset_iterator.initializer)
+            for epoch in range(epochs):
+                print('Epoch {:d}'.format(epoch))
+
+                self.repeater = 3
+                if epoch % log_interval == 0:
+                    self.repeater = 5
+
+                disc_ones = np.ones((self.batch_size,1), dtype=np.float32)
+                disc_zeros = np.zeros((self.batch_size,1), dtype=np.float32)
+
+                _, disc_loss_orig = sess.run([self.disc_train_step, self.disc_loss], feed_dict={
+                    self.disc_gt: disc_ones,
+                    self.disc_input: sess.run(self.dataset_batch),
+                    self.drop_rate: 0.5
+                })
+                print("Disc. orig. loss: ", disc_loss_orig)
+
+                _, disc_loss_fake = sess.run([self.disc_train_step, self.disc_loss], feed_dict={
+                    self.disc_gt: disc_zeros,
+                    self.disc_input: self.vae_output.eval(),
+                    self.drop_rate: 0.5
+                })
+                print("Disc. fake loss: ", disc_loss_fake)
+
+                _, gen_loss = sess.run([self.gen_train_step, self.gen_loss], feed_dict={
+                    self.disc_gt: disc_ones,
+                    self.drop_rate: 0.5
+                })
+                print("Gen loss: ", gen_loss)
+
+                if epoch % save_interval == 0:
+                    save_path_local = saver.save(sess=sess, save_path=gen_model_ckpt, global_step=epoch)
+                    print('Model saved to file as {:s}'.format(save_path_local))
+
+                if epoch % log_interval == 0:
+                    if epoch == 0:
+                        if not os.path.exists('./images/0'):
+                            os.makedirs('./images/0')
+                        if not os.path.exists('./images/1'):
+                            os.makedirs('./images/1')
+                        if not os.path.exists('./images/2'):
+                            os.makedirs('./images/2')
+                        if not os.path.exists('./images/3'):
+                            os.makedirs('./images/3')
+
+                    batch = sess.run(self.dataset_batch)
+                    ims = np.reshape(batch[0], (160, 160))
+                    plt.imsave('./images/0/'+str(epoch)+'_0_baseline.png', ims, cmap='gray')
+                    ims = np.reshape(batch[8], (160, 160))
+                    plt.imsave('./images/1/'+str(epoch)+'_8_baseline.png', ims, cmap='gray')
+                    ims = np.reshape(batch[16], (160, 160))
+                    plt.imsave('./images/2/'+str(epoch)+'_16_baseline.png', ims, cmap='gray')
+                    ims = np.reshape(batch[24], (160, 160))
+                    plt.imsave('./images/3/'+str(epoch)+'_24_baseline.png', ims, cmap='gray')
+
+                    ims = self.vae_output.eval()
+
+                    imss = np.reshape(ims[0], (160, 160))
+                    plt.imsave('./images/0/' + str(epoch) + '.png', imss, cmap='gray')
+                    imss = np.reshape(ims[8], (160, 160))
+                    plt.imsave('./images/1/' + str(epoch) + '.png', imss, cmap='gray')
+                    imss = np.reshape(ims[16], (160, 160))
+                    plt.imsave('./images/2/' + str(epoch) + '.png', imss, cmap='gray')
+                    imss = np.reshape(ims[24], (160, 160))
+                    plt.imsave('./images/3/' + str(epoch) + '.png', imss, cmap='gray')
+
+        return 0
+
+
     def train(self, epochs, model_file, save_interval=50, log_interval=20):
         # sorted_list = self.texdat.train.images
 
@@ -327,6 +432,7 @@ class GAVAE_SIM(ModelGAVAE):
         # batch_test = resize_batch_images(batch_test, self.patch_size)
 
         save_path = 'model/' + model_file + '/'
+
         saver = tf.train.Saver(max_to_keep=5)
         if not os.path.exists(save_path):
             os.makedirs(save_path)
