@@ -8,8 +8,12 @@ from keras.models import Sequential, Model
 from keras.layers.convolutional import Conv2D, UpSampling2D
 from keras.layers import BatchNormalization, Activation
 from keras.layers.advanced_activations import LeakyReLU
+<<<<<<< Updated upstream
 
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Lambda
+=======
+from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Lambda, Concatenate
+>>>>>>> Stashed changes
 from keras.optimizers import Adam, SGD, Adadelta
 
 import os.path
@@ -57,7 +61,11 @@ class GAVAE_SIM(ModelGAVAE):
         # Init TODO: research the middle layer
 
         self.m = batch_size #1 #50
+<<<<<<< Updated upstream
         self.n_z = 256
+=======
+        self.n_z = 32
+>>>>>>> Stashed changes
         self.margin = margin
         self.dropout = 0.1
 
@@ -130,7 +138,12 @@ class GAVAE_SIM(ModelGAVAE):
 
         # The valid takes generated images as input and determines validity
         img = self.vae_complete(self.input)
-        valid = self.discriminator(img)
+
+        #input_g = Input(batch_shape=self.batch_img_shape)(self.input)
+
+        input2 = Concatenate(axis=-1)([self.input, img])
+
+        valid = self.discriminator(input2)
 
         self.custom_loss = self.custom_gen_loss_wrapper(self.input)
         self.generator_combined = Model(self.input, valid, name='generator_combined')
@@ -186,10 +199,27 @@ class GAVAE_SIM(ModelGAVAE):
         self.reconstruction_loss = K.mean(reconstruction_loss) / (self.patch_size[0]*self.patch_size[1])
         # tf.summary.scalar('reconstruction_loss',reconstruction_loss)
         # compute the KL loss
+<<<<<<< Updated upstream
         self.kl_loss = - 0.5 * K.mean(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
         # tf.summary.scalar('kl_loss', kl_loss)
         # return the average loss over all images in batch
         total_loss = K.mean(self.meansquare_loss + 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
+=======
+        self.kl_loss = - 0.5 * K.sum(1 + self.log_sigma_1 - K.square(self.mu_1) - K.square(K.exp(self.log_sigma_1)), axis=-1)
+
+
+        self.mse = K.mean(K.square(batch_input - self.vae_output))
+        # return the average loss over all images in batch
+        # total_loss = K.mean(self.meansquare_loss + 0.02 * self.kl_loss + 0.7 * self.margin_loss + self.reconstruction_loss)
+        total_loss = K.mean(self.meansquare_loss)
+        # total_loss = self.meansquare_loss
+
+        # tf.summary.scalar('margin_loss', self.margin_loss)
+        # tf.summary.scalar('true_loss', self.meansquare_loss)
+        # tf.summary.scalar('reconstruction_loss', self.reconstruction_loss)
+        # tf.summary.scalar('kl_loss', self.kl_loss)
+
+>>>>>>> Stashed changes
         return total_loss
 
     def disc_loss(selfself, y_true, y_pred):
@@ -218,30 +248,21 @@ class GAVAE_SIM(ModelGAVAE):
 
         list.append(Reshape(target_shape=self.mid_shape_16))  # TODO: need to know middle shape?
 
-        list.append(Conv2D(filters=64, kernel_size=1, strides=1, padding='same', data_format='channels_last',
+        list.append(Conv2D(filters=16, kernel_size=1, strides=1, padding='same', data_format='channels_last',
                            dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                            bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                            activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
         list.append(LeakyReLU())
         list.append(BatchNormalization(momentum=0.8))
 
-        list.append(Conv2D(filters=128, kernel_size=1, strides=1, padding='same', data_format='channels_last',
+        list.append(Conv2D(filters=32, kernel_size=1, strides=1, padding='same', data_format='channels_last',
                            dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                            bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                            activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
         list.append(LeakyReLU())
         list.append(BatchNormalization(momentum=0.8))
 
-        list.append(Conv2D(filters=512, kernel_size=7, strides=1, padding='same', data_format='channels_last',
-                           dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
-                           bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
-                           activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
-        list.append(LeakyReLU())
-        list.append(UpSampling2D(size=(2, 2)))
-        list.append(BatchNormalization(momentum=0.8))
-        list.append(Dropout(self.dropout))
-
-        list.append(Conv2D(filters=384, kernel_size=3, strides=1, padding='same', data_format='channels_last',
+        list.append(Conv2D(filters=64, kernel_size=5, strides=1, padding='same', data_format='channels_last',
                            dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                            bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                            activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
@@ -250,7 +271,7 @@ class GAVAE_SIM(ModelGAVAE):
         list.append(BatchNormalization(momentum=0.8))
         list.append(Dropout(self.dropout))
 
-        list.append(Conv2D(filters=128, kernel_size=5, strides=1, padding='same', data_format='channels_last',
+        list.append(Conv2D(filters=128, kernel_size=3, strides=1, padding='same', data_format='channels_last',
                            dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                            bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                            activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
@@ -259,7 +280,16 @@ class GAVAE_SIM(ModelGAVAE):
         list.append(BatchNormalization(momentum=0.8))
         list.append(Dropout(self.dropout))
 
-        list.append(Conv2D(filters=96, kernel_size=3, strides=1, padding='same', data_format='channels_last',
+        list.append(Conv2D(filters=64, kernel_size=5, strides=1, padding='same', data_format='channels_last',
+                           dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
+                           bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
+                           activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
+        list.append(LeakyReLU())
+        list.append(UpSampling2D(size=(2, 2)))
+        list.append(BatchNormalization(momentum=0.8))
+        list.append(Dropout(self.dropout))
+
+        list.append(Conv2D(filters=16, kernel_size=3, strides=1, padding='same', data_format='channels_last',
                            dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                            bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                            activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None))
@@ -276,9 +306,10 @@ class GAVAE_SIM(ModelGAVAE):
 
     def get_vae_encoder_part(self):
 
-        input = Input(shape=self.img_shape)
+        #input = Input(shape=self.img_shape)
+        input = Input(batch_shape=self.batch_img_shape)
 
-        l_1 = Conv2D(filters=96, kernel_size=3, strides=2, padding='same', data_format='channels_last',
+        l_1 = Conv2D(filters=16, kernel_size=3, strides=2, padding='same', data_format='channels_last',
                dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(input)
@@ -286,7 +317,7 @@ class GAVAE_SIM(ModelGAVAE):
         b_1 = BatchNormalization(momentum=0.8)(a_1)
         d_1 = Dropout(self.dropout)(b_1)
 
-        l_2 = Conv2D(filters=128, kernel_size=5, strides=2, padding='same', data_format='channels_last',
+        l_2 = Conv2D(filters=32, kernel_size=5, strides=2, padding='same', data_format='channels_last',
                      dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(d_1)
@@ -294,7 +325,7 @@ class GAVAE_SIM(ModelGAVAE):
         b_2 = BatchNormalization(momentum=0.8)(a_2)
         d_2 = Dropout(self.dropout)(b_2)
 
-        l_3 = Conv2D(filters=384, kernel_size=3, strides=2, padding='same', data_format='channels_last',
+        l_3 = Conv2D(filters=64, kernel_size=3, strides=2, padding='same', data_format='channels_last',
                      dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(d_2)
@@ -302,21 +333,21 @@ class GAVAE_SIM(ModelGAVAE):
         b_3 = BatchNormalization(momentum=0.8)(a_3)
         d_3 = Dropout(self.dropout)(b_3)
 
-        l_4 = Conv2D(filters=512, kernel_size=7, strides=2, padding='same', data_format='channels_last',
+        l_4 = Conv2D(filters=128, kernel_size=7, strides=2, padding='same', data_format='channels_last',
                      dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(d_3)
         a_4 = LeakyReLU()(l_4)
         b_4 = BatchNormalization(momentum=0.8)(a_4)
 
-        l_5 = Conv2D(filters=128, kernel_size=1, strides=1, padding='same', data_format='channels_last',
+        l_5 = Conv2D(filters=64, kernel_size=1, strides=1, padding='same', data_format='channels_last',
                      dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(b_4)
         a_5 = LeakyReLU()(l_5)
         b_5 = BatchNormalization(momentum=0.8)(a_5)
 
-        l_6 = Conv2D(filters=64, kernel_size=1, strides=1, padding='same', data_format='channels_last',
+        l_6 = Conv2D(filters=32, kernel_size=1, strides=1, padding='same', data_format='channels_last',
                      dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(b_5)
@@ -346,9 +377,9 @@ class GAVAE_SIM(ModelGAVAE):
 
     def get_discriminator(self):
 
-        input = Input(shape=self.img_shape)
+        input = Input(shape=self.img_shape_disc)
 
-        l_1 = Conv2D(filters=32, kernel_size=3, strides=2, padding='same', data_format='channels_last',
+        l_1 = Conv2D(filters=16, kernel_size=5, strides=2, padding='same', data_format='channels_last',
                      dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(input)
@@ -356,7 +387,7 @@ class GAVAE_SIM(ModelGAVAE):
         b_1 = BatchNormalization(momentum=0.8)(a_1)
         d_1 = Dropout(self.dropout)(b_1)
 
-        l_2 = Conv2D(filters=48, kernel_size=5, strides=2, padding='same', data_format='channels_last',
+        l_2 = Conv2D(filters=32, kernel_size=5, strides=2, padding='same', data_format='channels_last',
                      dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                      bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                      activity_regularizer=self.reg, kernel_constraint=None, bias_constraint=None)(d_1)
@@ -446,12 +477,29 @@ class GAVAE_SIM(ModelGAVAE):
             #                                                   self.patch_size, normalize='zeromean')
 
             batch = []
+            batch_disc = []
             for ind in indices:
                 for i in range(int(self.batch_size / 4)):
+<<<<<<< Updated upstream
                     batch.append(self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
             batch = resize_batch_images(batch, self.patch_size)
+=======
+                    # batch.append(self.texdat.read_image_patch(sorted_list[ind][1].paths[0], patch_size=self.patch_size))
+                    batch.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
+                    batch_disc.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
+            batch = resize_batch_images(batch, self.patch_size)
+            batch_disc = resize_batch_images(batch_disc, self.patch_size)
+            batch = normalize_batch_images(batch, 'zeromean')
+            batch_disc = normalize_batch_images(batch_disc, 'zeromean')
+
+            batch_cat_real = np.concatenate([batch, batch_disc], axis=-1)
+
+            # batch = normalize_batch_images(batch, 'minmax')
+>>>>>>> Stashed changes
 
             generated = self.vae_complete.predict(batch)
+
+            batch_cat_gen = np.concatenate([batch, generated], axis=-1)
 
             # batch_discriminator = np.concatenate((batch, generated))
             # labels = np.concatenate((np.ones(self.batch_size, np.float32), (np.zeros(self.batch_size, np.float32))))
@@ -465,14 +513,14 @@ class GAVAE_SIM(ModelGAVAE):
             # IMPROVE 3. train gen/disc depending on each other:
             if train_disc:
                 # IMPROVE 1. mini-batches of REAL / FAKE
-                loss_real = self.discriminator.train_on_batch(batch, labels_real)
-                loss_fake = self.discriminator.train_on_batch(generated, labels_fake)
+                loss_real = self.discriminator.train_on_batch(batch_cat_real, labels_fake)
+                loss_fake = self.discriminator.train_on_batch(batch_cat_gen, labels_real)
                 loss_disc = 0.5 * np.add(loss_real, loss_fake)
                 print("Epoch: %d [Disc. loss: %f, acc.: %.2f%%]" % (epoch, loss_disc[0], 100 * loss_disc[1]))
 
             if train_gen:
 
-                loss_gen = self.generator_combined.train_on_batch(batch, labels_real)
+                loss_gen = self.generator_combined.train_on_batch(batch, labels_fake)
                 print("Epoch: %d [Gen. loss: %f, acc.: %.2f%%]" % (epoch, loss_gen[0], 100 * loss_gen[1]))
                 self.callback.on_epoch_end(epoch, self.losses())
             # we will train generator until it will overcome 1.5* of disc loss
