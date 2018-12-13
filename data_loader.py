@@ -60,6 +60,11 @@ class TexDAT:
         self.only_paths = only_paths
         return True
 
+    def load_images(self, only_paths):
+        self.read_images_to_array(self.train.abs_path, train=True)
+        self.read_images_to_array(self.test.abs_path, test=True)
+        self.only_paths = only_paths
+
     @staticmethod
     def read_segment(abspath: str, texid: int = None):
         if not os.path.exists(abspath):
@@ -99,6 +104,31 @@ class TexDAT:
         patch = image[row:row+patch_size[0], col:col+patch_size[1]] / 256
         return np.array(patch).astype(np.float32)
 
+    @staticmethod
+    def load_image_patch(image:np.ndarray, patch_size:tuple=(160,160)) -> np.ndarray:
+        h = image.shape[0]
+        w = image.shape[1]
+        row = random.randint(0, h - patch_size[0])
+        col = random.randint(0, w - patch_size[1])
+
+        patch = image[row:row + patch_size[0], col:col + patch_size[1]] / 256
+        return np.array(patch).astype(np.float32)
+
+    def read_images_to_array(self, abspath=None, train=False, test=False, mode:str='L'):
+        if not os.path.exists(abspath):
+            return
+        if not (train or test):
+            return
+        print("Loading from \"" + abspath + "\"")
+        files = os.listdir(abspath)
+        files.sort()
+        for file in files:
+            image_path = os.path.join(abspath, file)
+            image = imread(image_path, mode=mode)
+            if train:
+                self.train.images.append(image)
+            if test:
+                self.test.images.append(image)
 
     def read_data_to_array(self, abspath=None, only_paths: bool = False, train=False, test=False):
         if not os.path.exists(abspath):
@@ -260,5 +290,6 @@ class TexDAT:
 
         def add_object(self, o):
             self.images.append(o)
+
 
 
