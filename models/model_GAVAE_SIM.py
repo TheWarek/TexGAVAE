@@ -35,6 +35,17 @@ class GAVAE_SIM(ModelGAVAE):
 
         self.k_reg = None #regularizers.l2(0.01)
         self.reg = None #regularizers.l2(0.01)
+        a = 10
+        b = 10
+
+        self.params = {'a': a, 'b': b}
+
+        setattr(tf.keras.backend, 'params', self.params)
+
+        test = tf.keras.backend.params['a']
+        a = 11
+        setattr(tf.keras.backend, 'params', self.params)
+        test2 = tf.keras.backend.params['a']
 
         # Optimizer
         self.optimizer = tf.keras.optimizers.Adam(lr=lr, beta_1=0.9)
@@ -50,6 +61,25 @@ class GAVAE_SIM(ModelGAVAE):
         self.callback = tf.keras.callbacks.TensorBoard(log_dir=log_path, histogram_freq=0,
                                     write_graph=True, write_images=False)
         self.callback.set_model(self.autoencoder)
+
+    def sample_slice_a(self, args, i):
+        slice = args
+
+        a = tf.keras.layers.Flatten()(tf.slice(slice, [0, 0, i, 0], [self.batch_size, 160, 1, 1]))
+        b = tf.keras.layers.Flatten()(tf.slice(slice, [0, i, 0, 0], [self.batch_size, 1, 160, 1]))
+
+        return a,b
+
+    def sample_a(self, args):
+        a_all, b_all = args
+
+        a_all = tf.reshape(a_all, [self.batch_size, 160, 1])
+        b_all = tf.reshape(b_all, [self.batch_size, 1, 160])
+
+        c_all = tf.matmul(a_all, b_all)
+        c_all = tf.reshape(c_all, [self.batch_size, 160, 160, 1])
+
+        return c_all
 
     def sample_z(self, args):
 
@@ -125,7 +155,31 @@ class GAVAE_SIM(ModelGAVAE):
         b_4 = tf.keras.layers.BatchNormalization()(a_4)
         d_4 = tf.keras.layers.Dropout(self.dropout)(b_4)
 
-        z = tf.keras.layers.Lambda(self.sample_z)(d_4)
+        #z = tf.keras.layers.Lambda(self.sample_z)(d_4)
+
+        #i_num = tf.constant(0)
+        a,b = tf.keras.layers.Lambda(self.sample_slice_a, arguments={'i': 0})(d_4)
+        # lamb = tf.keras.layers.Lambda(self.sample_slice_a)
+        # lamb.arguments = {'i':0}
+        # a,b = lamb(d_4)
+        #a = tf.keras.layers.Flatten()(tf.slice(d_4, [0, 0, 0, 0], [self.batch_size, 160, 1, 1]))
+        a_all = tf.keras.layers.Dense(1)(a)
+        # b = tf.keras.layers.Flatten()(tf.slice(d_4, [0, 0, 0, 0], [self.batch_size, 1, 160, 1]))
+        b_all = tf.keras.layers.Dense(1)(b)
+
+        for i in range(1, 160):
+            # a is column
+            i_num = tf.constant(i)
+            a, b = tf.keras.layers.Lambda(self.sample_slice_a, arguments={'i': i})(d_4)
+            #a = tf.keras.layers.Flatten()(tf.slice(d_4, [0, 0, i, 0], [self.batch_size, 160, 1, 1]))
+
+            d_a = tf.keras.layers.Dense(1)(a)
+            a_all = tf.keras.layers.concatenate([a_all, d_a], axis=1)
+            #b = tf.keras.layers.Flatten()(tf.slice(d_4, [0, i, 0, 0], [self.batch_size, 1, 160, 1]))
+            d_b = tf.keras.layers.Dense(1)(b)
+            b_all = tf.keras.layers.concatenate([b_all, d_b], axis=1)
+
+        z = tf.keras.layers.Lambda(self.sample_a)([a_all, b_all])
 
 
 
@@ -193,7 +247,7 @@ class GAVAE_SIM(ModelGAVAE):
 
         batch_test = []
         # indices = [46, 103, 137, 195, 15, 69, 125, 180]
-        indices = [46]
+        indices = [103]
         # for ind in indices:
         #     for i in range(int(self.batch_size/len(indices))):
         #         batch_test.append(self.texdat.read_segment(sorted_list[ind][1].paths[0]))
@@ -225,7 +279,7 @@ class GAVAE_SIM(ModelGAVAE):
             batch = resize_batch_images(batch_test, self.patch_size)
             batch = normalize_batch_images(batch, 'zeromean')
 
-            loss = self.autoencoder.train_on_batch(batch, batch)
+            loss = self.autoencoder.train_on_batch(batch_test, batch_test)
             print("Epoch: %d loss: %f, acc.: %.2f%%]" % (epoch, loss[0], 100 * loss[1]))
 
             # Save interval
