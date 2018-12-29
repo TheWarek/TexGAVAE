@@ -1,6 +1,3 @@
-from blaze.compute.numpy import epoch
-from tensorflow.contrib.seq2seq.python.ops import loss
-
 from .model import ModelGAVAE
 import tensorflow as tf
 
@@ -34,7 +31,7 @@ class GAVAE_SIM(ModelGAVAE):
             self.texdat = TexDAT(data_path, self.batch_size)
             self.texdat.load_images(False)
 
-        self.dataset = tf.data.Dataset.from_generator(self.dataset_generator,output_types=tf.float32, output_shapes=([None,w,h,c]))
+        self.dataset = tf.data.Dataset.from_generator(self.dataset_generator,output_types=tf.float32, output_shapes=([None,w,h,15]))
         self.dataset_iterator = self.dataset.make_initializable_iterator()
         self.dataset_batch = self.dataset_iterator.get_next()
 
@@ -44,7 +41,7 @@ class GAVAE_SIM(ModelGAVAE):
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
         self.disc_gt = tf.placeholder(tf.float32, [None, 1], name="disc_gt")
-        self.disc_input = tf.placeholder(dtype=tf.float32, shape=[None, w, h, c], name="disc_input")
+        self.disc_input = tf.placeholder(dtype=tf.float32, shape=[None, w, h, 15], name="disc_input")
 
         self.dec_input = tf.placeholder(dtype=tf.float32, shape=[None, self.n_z], name="dec_input")
 
@@ -151,7 +148,7 @@ class GAVAE_SIM(ModelGAVAE):
     # vae encoder mu, log_sigma, sampled_z
     def get_vae_encoder_part(self, input, trainable) -> [tf.Tensor, tf.Tensor, tf.Tensor]:
         with tf.variable_scope('layer_1'):
-            net_1 = tf.layers.conv2d(input, filters=16, kernel_size=5, strides=1,
+            net_1 = tf.layers.conv2d(input, filters=32, kernel_size=5, strides=1,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_1')
             net_1 = tf.nn.leaky_relu(net_1, name='relu_1')
@@ -159,7 +156,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_1 = tf.layers.dropout(net_1, self.drop_rate, name='dropout_1')
 
         with tf.variable_scope('layer_2'):
-            net_2 = tf.layers.conv2d(net_1, filters=32, kernel_size=5, strides=2,
+            net_2 = tf.layers.conv2d(net_1, filters=64, kernel_size=5, strides=2,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_2')
             net_2 = tf.nn.leaky_relu(net_2, name='relu_2')
@@ -167,7 +164,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_2 = tf.layers.dropout(net_2, self.drop_rate, name='dropout_2')
 
         with tf.variable_scope('layer_3'):
-            net_3 = tf.layers.conv2d(net_2, filters=64, kernel_size=5, strides=2,
+            net_3 = tf.layers.conv2d(net_2, filters=128, kernel_size=5, strides=2,
                                      padding='same', data_format='channels_last', trainable=trainable,
                                      reuse=tf.AUTO_REUSE, name='conv_3')
             net_3 = tf.nn.leaky_relu(net_3, name='relu_3')
@@ -257,10 +254,13 @@ class GAVAE_SIM(ModelGAVAE):
             net_5 = tf.layers.batch_normalization(net_5, momentum=0.8, reuse=tf.AUTO_REUSE)
             net_5 = tf.layers.dropout(net_5, self.drop_rate)
 
+        def relu1(features, name=None):
+            return tf.nn.relu(tf.minimum(tf.maximum(features,0),1), name)
+
         with tf.variable_scope('layer_6'):
             # net_6 = tf.image.resize_images(net_5, size=(8 * self.mid_shape_16[0], 8 * self.mid_shape_16[1]))
-            net_6 = tf.layers.conv2d(net_5, filters=1, kernel_size=1, strides=1,
-                                               padding='same', data_format='channels_last', activation=tf.nn.sigmoid, reuse=tf.AUTO_REUSE)
+            net_6 = tf.layers.conv2d(net_5, filters=15, kernel_size=1, strides=1,
+                                               padding='same', data_format='channels_last', activation=relu1, reuse=tf.AUTO_REUSE)
         #     net_6 = tf.nn.leaky_relu(net_6)
         #     net_6 = tf.layers.batch_normalization(net_6, momentum=0.8)
         #     net_6 = tf.layers.dropout(net_6, self.drop_rate)
@@ -315,12 +315,15 @@ class GAVAE_SIM(ModelGAVAE):
             net_4 = tf.nn.leaky_relu(net_4, name='l_relu_4')
 
         flat = tf.layers.flatten(net_4, 'flat')
+
         dense = tf.layers.dense(flat, 1, activation=tf.nn.sigmoid, reuse=tf.AUTO_REUSE, trainable=trainable, name="dense_1")
 
         return dense
 
     def dataset_generator(self):
         if self.is_textdat:
+            mask_size = (self.batch_size, self.patch_size[0], self.patch_size[1], self.patch_size[2])
+            masks = np.asarray([np.ones(mask_size,dtype=np.int)*(1 << i) for i in range(1,8)],dtype=np.int)
             sorted_list = self.texdat.train.images
             while True:
                 batch = []
@@ -331,6 +334,9 @@ class GAVAE_SIM(ModelGAVAE):
                         batch.append(
                             self.texdat.load_image_patch(sorted_list[ind], patch_size=self.patch_size))
                 batch = resize_batch_images(batch, self.patch_size)
+                batch_b = np.concatenate(np.asarray([np.bitwise_and(np.asarray(batch*255,dtype=np.int), masks[m])/(1<<(m+1)) for m in range(len(masks))]), axis=3)
+                batch_n = np.concatenate(np.asarray([np.bitwise_and(255-np.asarray(batch*255,dtype=np.int), masks[m]) / (1<<(m+1)) for m in range(len(masks))]), axis=3)
+                batch = np.concatenate((batch,batch_b,batch_n), axis=3)
                 self.new_batch = False
                 while not self.new_batch:
                     yield batch
@@ -459,14 +465,14 @@ class GAVAE_SIM(ModelGAVAE):
                 })
                 print("Disc. fake vae loss: ", disc_loss_v)
 
-                if disc_loss < 0.2 and disc_loss_v < 0.2:
-                    print("Disc. loss < 0.05 --> trying validation again")
-                    disc_predict_orig = self.sess.run([self.discriminator_original], feed_dict={
-                        self.disc_input: np.concatenate((originals, fakes_vae)),
-                        self.drop_rate: 0
-                    })
-                    disc_val_ori = np.mean(np.square(disc_predict_orig - np.concatenate((disc_ones, disc_zeros))))
-                    print("Disc. validation classification error: ", disc_val_ori)
+                # if disc_loss < 0.2 and disc_loss_v < 0.2:
+                #     print("Disc. loss < 0.05 --> trying validation again")
+                #     disc_predict_orig = self.sess.run([self.discriminator_original], feed_dict={
+                #         self.disc_input: np.concatenate((originals, fakes_vae)),
+                #         self.drop_rate: 0
+                #     })
+                #     disc_val_ori = np.mean(np.square(disc_predict_orig - np.concatenate((disc_ones, disc_zeros))))
+                #     print("Disc. validation classification error: ", disc_val_ori)
 
                 _, vae_loss = self.sess.run([self.vae_train_step, self.vae_loss])
                 print("VAE loss: ", vae_loss)
@@ -479,7 +485,7 @@ class GAVAE_SIM(ModelGAVAE):
                 print("Gen loss: ", gen_loss)
 
                 # regularization for early stopping
-                if disc_loss in unwanted or vae_loss > 500:
+                if disc_loss in unwanted or vae_loss > 5000:
                     if early_stop_counter > 5:
                         print("Stopping the training due to unable to learn details.")
                         print("Unable to change gradient for the 5th time")
@@ -519,28 +525,28 @@ class GAVAE_SIM(ModelGAVAE):
                             os.makedirs('./images/3')
 
                     batch = self.sess.run(self.dataset_batch)
-                    w = self.patch_size[0]
-                    h = self.patch_size[1]
-                    dimensions = (w, h)
+                    # w = self.patch_size[0]
+                    # h = self.patch_size[1]
+                    # dimensions = (w, h)
 
-                    ims = np.reshape(batch[0], dimensions)
+                    ims = batch[0][:,:,0]
                     plt.imsave('./images/0/'+str(iteration)+'_0_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch[int(self.batch_size*1/4)], dimensions)
+                    ims = batch[int(self.batch_size*1/4)][:,:,0]
                     plt.imsave('./images/1/'+str(iteration)+'_1_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch[int(self.batch_size*2/4)], dimensions)
+                    ims = batch[int(self.batch_size*2/4)][:,:,0]
                     plt.imsave('./images/2/'+str(iteration)+'_2_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch[int(self.batch_size*3/4)], dimensions)
+                    ims = batch[int(self.batch_size*3/4)][:,:,0]
                     plt.imsave('./images/3/'+str(iteration)+'_3_baseline.png', ims, cmap='gray')
 
                     ims = self.vae_output.eval()
 
-                    imss = np.reshape(ims[0], dimensions)
+                    imss = ims[0][:,:,0]
                     plt.imsave('./images/0/' + str(iteration) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[int(self.batch_size*1/4)], dimensions)
+                    imss = ims[int(self.batch_size*1/4)][:,:,0]
                     plt.imsave('./images/1/' + str(iteration) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[int(self.batch_size*2/4)], dimensions)
+                    imss = ims[int(self.batch_size*2/4)][:,:,0]
                     plt.imsave('./images/2/' + str(iteration) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[int(self.batch_size*3/4)], dimensions)
+                    imss = ims[int(self.batch_size*3/4)][:,:,0]
                     plt.imsave('./images/3/' + str(iteration) + '.png', imss, cmap='gray')
         return 0
 
