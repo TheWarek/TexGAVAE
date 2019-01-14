@@ -37,7 +37,7 @@ class GAVAE_SIM(ModelGAVAE):
 
         self.m = batch_size
         self.margin = margin
-        self.n_z = 100
+        self.n_z = 400
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
         self.disc_gt = tf.placeholder(tf.float32, [None, 1], name="disc_gt")
@@ -48,7 +48,7 @@ class GAVAE_SIM(ModelGAVAE):
         self.disc_summaries = []
         self.vae_summaries = []
 
-        self.mid_shape = (20,20,128)
+        self.mid_shape = (20,20,16)
         with tf.variable_scope('encoders') as scope:
             self.mu_1, self.log_sigma_1, self.z_1 = self.get_vae_encoder_part(self.dataset_batch, True)  # encoder at the beginning
             with tf.variable_scope('decoder') as dec_scope:
@@ -108,7 +108,7 @@ class GAVAE_SIM(ModelGAVAE):
             self.vae_summaries.append(tf.summary.scalar('encoder_loss', encoder_loss))
             # return the average loss over all images in batch
             # kokot neotacaj ho, nechaj +, lebo uz je vynasobeny -1 on sam
-            total_loss = tf.reduce_mean(2*reconstruction_loss + 4*kl_loss)
+            total_loss = tf.reduce_mean(reconstruction_loss + 5*kl_loss)
             self.vae_summaries.append(tf.summary.scalar('total_loss', total_loss))
         return total_loss
 
@@ -117,16 +117,18 @@ class GAVAE_SIM(ModelGAVAE):
         with tf.variable_scope('generator_loss'):
             with tf.variable_scope('meansquare_loss'):
                 reconstruction_loss = tf.sqrt(tf.reduce_sum(tf.square(vae_input - self.vae_output)))
+                sampling_loss = tf.sqrt(tf.reduce_mean(tf.square(self.mu_1 - self.mu_2)))
                 meansquare_loss = tf.reduce_mean(tf.square(y_pred-y_true))
                 self.disc_summaries.append(tf.summary.scalar('recon_loss', reconstruction_loss))
                 self.disc_summaries.append(tf.summary.scalar('meansq_loss', meansquare_loss))
+                self.disc_summaries.append(tf.summary.scalar('sampling_loss', sampling_loss))
             # with tf.variable_scope('kl_divergence_loss'):
                 # compute the KL loss - reduce_sum
                 self.kl_loss = - 0.5 * tf.reduce_mean(1 + self.log_sigma_1 - tf.square(self.mu_1) - tf.square(tf.exp(self.log_sigma_1)), axis=-1)
                 self.disc_summaries.append(tf.summary.scalar('kl_loss', tf.reduce_mean(self.kl_loss)))
             with tf.variable_scope('total_mean_loss'):
                 # return the average loss over all images in batch
-                total_loss = tf.reduce_mean(10*meansquare_loss)
+                total_loss = tf.reduce_mean(10*meansquare_loss + sampling_loss + self.kl_loss)
                 self.disc_summaries.append(tf.summary.scalar('total_loss', total_loss))
         return total_loss
 
@@ -250,7 +252,7 @@ class GAVAE_SIM(ModelGAVAE):
             net_5 = tf.image.resize_images(net_4, size=(8 * self.mid_shape[0], 8 * self.mid_shape[1]))
             net_5 = tf.layers.conv2d(net_5, filters=128, kernel_size=5, strides=1,
                                      padding='same', data_format='channels_last', reuse=tf.AUTO_REUSE)
-            net_5 = tf.nn.leaky_relu(net_5)
+            net_5 = tf.nn.relu(net_5)
             net_5 = tf.layers.batch_normalization(net_5, momentum=0.8, reuse=tf.AUTO_REUSE)
             net_5 = tf.layers.dropout(net_5, self.drop_rate)
 
@@ -335,7 +337,7 @@ class GAVAE_SIM(ModelGAVAE):
                             self.texdat.load_image_patch(sorted_list[ind], patch_size=self.patch_size))
                 batch = resize_batch_images(batch, self.patch_size)
                 batch_b = np.concatenate(np.asarray([np.bitwise_and(np.asarray(batch*255,dtype=np.int), masks[m])/(1<<(m+1)) for m in range(len(masks))]), axis=3)
-                batch_n = np.concatenate(np.asarray([np.bitwise_and(255-np.asarray(batch*255,dtype=np.int), masks[m]) / (1<<(m+1)) for m in range(len(masks))]), axis=3)
+                batch_n = np.concatenate(np.asarray([np.bitwise_and(255-np.asarray(batch*255,dtype=np.int), masks[m])/(1<<(m+1)) for m in range(len(masks))]), axis=3)
                 batch = np.concatenate((batch,batch_b,batch_n), axis=3)
                 self.new_batch = False
                 while not self.new_batch:
@@ -456,14 +458,14 @@ class GAVAE_SIM(ModelGAVAE):
                 })
                 print("Disc. fake vae loss: ", disc_loss_v)
 
-                self.new_batch = True
+                # self.new_batch = True
 
-                _, disc_loss_v, disc_sum = self.sess.run([self.disc_train_step, self.disc_loss, disc_sum_merge], feed_dict={
-                    self.disc_gt: disc_zeros,
-                    self.disc_input: fakes_vae,
-                    self.drop_rate: 0.5
-                })
-                print("Disc. fake vae loss: ", disc_loss_v)
+                # _, disc_loss_v, disc_sum = self.sess.run([self.disc_train_step, self.disc_loss, disc_sum_merge], feed_dict={
+                #     self.disc_gt: disc_zeros,
+                #     self.disc_input: fakes_vae,
+                #     self.drop_rate: 0.5
+                # })
+                # print("Disc. fake vae loss: ", disc_loss_v)
 
                 # if disc_loss < 0.2 and disc_loss_v < 0.2:
                 #     print("Disc. loss < 0.05 --> trying validation again")
@@ -477,7 +479,7 @@ class GAVAE_SIM(ModelGAVAE):
                 _, vae_loss = self.sess.run([self.vae_train_step, self.vae_loss])
                 print("VAE loss: ", vae_loss)
 
-                self.new_batch = True
+                # self.new_batch = True
                 _, gen_loss = self.sess.run([self.gen_train_step, self.gen_loss], feed_dict={
                     self.disc_gt: disc_ones,
                     self.drop_rate: 0.5
@@ -485,7 +487,7 @@ class GAVAE_SIM(ModelGAVAE):
                 print("Gen loss: ", gen_loss)
 
                 # regularization for early stopping
-                if disc_loss in unwanted or vae_loss > 5000:
+                if iteration > 200 and (disc_loss in unwanted or vae_loss > 10000):
                     if early_stop_counter > 5:
                         print("Stopping the training due to unable to learn details.")
                         print("Unable to change gradient for the 5th time")
@@ -504,7 +506,7 @@ class GAVAE_SIM(ModelGAVAE):
                             continue
                         else:
                             print("Stopping the training due to unable to find suitable checkpoint.")
-                            break
+                            return 1488
 
                 if iteration % save_interval == 0 and iteration > 0:
                     save_path_local = saver.save(sess=self.sess, save_path=gen_model_ckpt, global_step=iteration)
@@ -633,7 +635,7 @@ class GAVAE_SIM(ModelGAVAE):
                 print('I {:d}. VAE {:.6f}'.format(iteration, vae_loss))
 
                 # regularization for early stopping
-                if vae_loss > 1000 or vae_loss < -1000:
+                if vae_loss > 10000 or vae_loss < -10000:
                     if early_stop_counter > 5:
                         print("Stopping the training due to high loss.")
                         print("Unable to change gradient for the 5th time")
@@ -669,17 +671,18 @@ class GAVAE_SIM(ModelGAVAE):
                             os.makedirs('./images/3')
 
                     batch = self.sess.run(self.dataset_batch)
-                    w = self.patch_size[0]
-                    h = self.patch_size[1]
-                    dimensions = (w,h)
-                    ims = np.reshape(batch[0], dimensions)
-                    plt.imsave('./images/0/'+str(iteration)+'_0_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch[8], dimensions)
-                    plt.imsave('./images/1/'+str(iteration)+'_8_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch[16], dimensions)
-                    plt.imsave('./images/2/'+str(iteration)+'_16_baseline.png', ims, cmap='gray')
-                    ims = np.reshape(batch[24], dimensions)
-                    plt.imsave('./images/3/'+str(iteration)+'_24_baseline.png', ims, cmap='gray')
+                    # w = self.patch_size[0]
+                    # h = self.patch_size[1]
+                    # dimensions = (w,h)
+                    ims = batch[0][:, :, 0]
+                    plt.imsave('./images/0/' + str(iteration) + '_0_baseline.png', ims, cmap='gray')
+                    ims = batch[int(self.batch_size * 1 / 4)][:, :, 0]
+                    plt.imsave('./images/1/' + str(iteration) + '_1_baseline.png', ims, cmap='gray')
+                    ims = batch[int(self.batch_size * 2 / 4)][:, :, 0]
+                    plt.imsave('./images/2/' + str(iteration) + '_2_baseline.png', ims, cmap='gray')
+                    ims = batch[int(self.batch_size * 3 / 4)][:, :, 0]
+                    plt.imsave('./images/3/' + str(iteration) + '_3_baseline.png', ims, cmap='gray')
+
                     # TODO: logging
                     # latent = self.z_1.eval()
                     # latent += 1.3
@@ -689,13 +692,13 @@ class GAVAE_SIM(ModelGAVAE):
 
                     ims = self.vae_output.eval()
 
-                    imss = np.reshape(ims[0], dimensions)
+                    imss = ims[0][:, :, 0]
                     plt.imsave('./images/0/' + str(iteration) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[8], dimensions)
+                    imss = ims[int(self.batch_size * 1 / 4)][:, :, 0]
                     plt.imsave('./images/1/' + str(iteration) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[16], dimensions)
+                    imss = ims[int(self.batch_size * 2 / 4)][:, :, 0]
                     plt.imsave('./images/2/' + str(iteration) + '.png', imss, cmap='gray')
-                    imss = np.reshape(ims[24], dimensions)
+                    imss = ims[int(self.batch_size * 3 / 4)][:, :, 0]
                     plt.imsave('./images/3/' + str(iteration) + '.png', imss, cmap='gray')
 
                     # imss = np.reshape(generated[0], (160, 160))
