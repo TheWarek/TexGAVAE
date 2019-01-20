@@ -37,7 +37,7 @@ class GAVAE_SIM(ModelGAVAE):
 
         self.batch_size = batch_size
         self.margin = margin
-        self.n_z = 400
+        self.n_z = 800
         self.drop_rate = tf.placeholder(tf.float32, None, name='dropout_rate')
 
         self.disc_gt = tf.placeholder(tf.float32, [None, 1], name="disc_gt")
@@ -378,7 +378,7 @@ class GAVAE_SIM(ModelGAVAE):
         save_path_gan = 'model/' + model_file + '_gan/'
         gen_model_ckpt = os.path.join(save_path_gan, 'checkpoint')
         vae_model_ckpt = os.path.join(restore_path, 'checkpoint')
-        with self.sess:
+        with tf.Session() as sess:
             flag_load_VAE = True
             if os.path.exists(save_path_gan):
                 try:
