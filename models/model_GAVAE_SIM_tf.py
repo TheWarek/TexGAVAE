@@ -51,56 +51,56 @@ class GAVAE_SIM(ModelGAVAE):
 
         with tf.variable_scope('encoders') as scope:
             self.mu_1, self.log_sigma_1, self.z_1 = self.get_vae_encoder_part(self.dataset_batch, True)  # encoder at the beginning
-            with tf.variable_scope('decoder') as dec_scope:
-                self.vae_output = self.get_vae_decoder_part(self.z_1)
-                dec_scope.reuse_variables()
-                self.dec_output = self.get_vae_decoder_part(self.dec_input)
-            scope.reuse_variables()
-            self.mu_2, self.log_sigma_2, self.z_2 = self.get_vae_encoder_part(self.vae_output, False)
+        with tf.variable_scope('decoder') as dec_scope:
+            self.vae_output = self.get_vae_decoder_part(self.z_1)
+            dec_scope.reuse_variables()
+            self.dec_output = self.get_vae_decoder_part(self.dec_input)
+            # scope.reuse_variables()
+            # self.mu_2, self.log_sigma_2, self.z_2 = self.get_vae_encoder_part(self.vae_output, False)
 
         self.gen_variables_to_train = self.variables_to_restore = tf.global_variables()
         self.dec_variables_to_train = list(filter(lambda v: 'decoder' in v.name, self.gen_variables_to_train))
 
-        with tf.variable_scope('discriminator') as scope:
-            self.discriminator_original = self.get_discriminator(self.disc_input, True)
-            scope.reuse_variables()
-            self.gavae = self.get_discriminator(self.vae_output, False)
+        # with tf.variable_scope('discriminator') as scope:
+        #     self.discriminator_original = self.get_discriminator(self.disc_input, True)
+        #     scope.reuse_variables()
+        #     self.gavae = self.get_discriminator(self.vae_output, False)
 
         self.sess = tf.Session()
 
-        self.gen_loss = self.__gen_loss(self.disc_gt, self.gavae, self.dataset_batch)
-        self.disc_loss = self.__disc_loss(self.disc_gt, self.discriminator_original)
+        # self.gen_loss = self.__gen_loss(self.disc_gt, self.gavae, self.dataset_batch)
+        # self.disc_loss = self.__disc_loss(self.disc_gt, self.discriminator_original)
 
         self.vae_I_loss = self.__vae_I_loss(self.dataset_batch)
-        self.vae_II_loss = self.__vae_II_loss(self.dataset_batch)
+        # self.vae_II_loss = self.__vae_II_loss(self.dataset_batch)
 
         with tf.variable_scope('optimizers'):
-            self.disc_optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.002)
-            self.gen_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
+            # self.disc_optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.002)
+            # self.gen_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
             self.vae_I_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
-            self.vae_II_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
+            # self.vae_II_optimizer = tf.train.AdamOptimizer(learning_rate=lr, beta1=0.5)
             self.vae_I_global_step = tf.Variable(initial_value=0, name='vae_I_global_step', trainable=False)
             self.vae_I_train_step = self.vae_I_optimizer.minimize(
                 loss=self.vae_I_loss,
                 global_step=self.vae_I_global_step
             )
-            self.vae_II_global_step = tf.Variable(initial_value=0, name='vae_II_global_step', trainable=False)
-            self.vae_II_train_step = self.vae_II_optimizer.minimize(
-                loss=self.vae_II_loss,
-                global_step=self.vae_II_global_step,
-                var_list=self.dec_variables_to_train
-            )
-            self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
-            self.disc_train_step = self.disc_optimizer.minimize(
-                loss=self.disc_loss,
-                global_step=self.disc_global_step
-            )
-            self.gen_global_step = tf.Variable(initial_value=0, name='gen_global_step', trainable=False)
-            self.gen_train_step = self.gen_optimizer.minimize(
-                loss=self.gen_loss,
-                global_step=self.gen_global_step,
-                var_list=self.gen_variables_to_train
-            )
+            # self.vae_II_global_step = tf.Variable(initial_value=0, name='vae_II_global_step', trainable=False)
+            # self.vae_II_train_step = self.vae_II_optimizer.minimize(
+            #     loss=self.vae_II_loss,
+            #     global_step=self.vae_II_global_step,
+            #     var_list=self.dec_variables_to_train
+            # )
+            # self.disc_global_step = tf.Variable(initial_value=0, name='disc_global_step', trainable=False)
+            # self.disc_train_step = self.disc_optimizer.minimize(
+            #     loss=self.disc_loss,
+            #     global_step=self.disc_global_step
+            # )
+            # self.gen_global_step = tf.Variable(initial_value=0, name='gen_global_step', trainable=False)
+            # self.gen_train_step = self.gen_optimizer.minimize(
+            #     loss=self.gen_loss,
+            #     global_step=self.gen_global_step,
+            #     var_list=self.gen_variables_to_train
+            # )
 
     def __vae_I_loss(self, vae_input):
         # compute the average MSE error, then scale it up, ie. simply sum on all axes
@@ -351,7 +351,8 @@ class GAVAE_SIM(ModelGAVAE):
             sorted_list = self.texdat.train.images
             # indices = np.random.choice(np.arange(len(sorted_list)), size=4, replace=False)
             # indices = [294, 309, 314, 248]
-            indices = [55, 53]
+            # indices = [55, 53]
+            indices = [0]
             if self.test_phase:
                 indices = np.arange(len(sorted_list))
             div = int(self.batch_size / len(indices))
@@ -663,7 +664,7 @@ class GAVAE_SIM(ModelGAVAE):
                 print('I {:d}. VAE_I {:.6f}'.format(iteration, vae_loss))
 
                 # regularization for early stopping
-                if vae_loss > 1000 or vae_loss < -1000:
+                if vae_loss > 500 or vae_loss < -500:
                     # if early_stop_counter > 5:
                     #     print("Stopping the training due to high loss.")
                     #     print("Unable to change gradient for the 5th time")
