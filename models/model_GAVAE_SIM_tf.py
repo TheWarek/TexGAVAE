@@ -390,7 +390,6 @@ class GAVAE_SIM(ModelGAVAE):
         if t < 0 or t > 1:
             return [ndimage.gaussian_filter(i, sigma=10*(1.01-np.random.rand())) for i in batch]
         return [ndimage.gaussian_filter(i, sigma=25*(1-t)) for i in batch]
-        pass
 
     def transfer_train(self, iterations, model_file, save_interval=50, log_interval=20):
         restorer = tf.train.Saver(var_list=self.variables_to_restore)
